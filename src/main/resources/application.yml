@@ -1,0 +1,48 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: mini-cdc-sync
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:192.168.100.128:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: mini-cdc-redis-consumer
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      missing-topics-fatal: false
+      auto-startup: ${mini-cdc.enabled:false}
+  data:
+    redis:
+      host: 192.168.100.128
+      port: 6379
+      password: 123456
+      database: 0
+      timeout: 5s
+
+mini-cdc:
+  enabled: true
+  log-event-json: true
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    username: cdc-yy
+    password: 1234
+    database: mini
+    table: user
+    jdbc-url: jdbc:mysql://127.0.0.1:3306/mini?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+
+  kafka:
+    topic: user-change-topic
+  redis:
+    key-prefix: "user:"
+
+logging:
+  level:
+    com.yunye.mncdc: info
+    org.apache.kafka.clients.consumer.ConsumerConfig: warn
