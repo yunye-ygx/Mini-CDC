@@ -19,23 +19,23 @@ spring:
       auto-startup: ${mini-cdc.enabled:false}
   data:
     redis:
-      host: 192.168.100.128
-      port: 6379
-      password: 123456
-      database: 0
-      timeout: 5s
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: ${REDIS_TIMEOUT:5s}
 
 mini-cdc:
   enabled: true
   log-event-json: true
   mysql:
-    host: 127.0.0.1
-    port: 3306
-    username: cdc-yy
-    password: 1234
-    database: mini
-    table: user
-    jdbc-url: jdbc:mysql://127.0.0.1:3306/mini?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    host: ${CDC_MYSQL_HOST:127.0.0.1}
+    port: ${CDC_MYSQL_PORT:3306}
+    username: ${CDC_MYSQL_USERNAME:}
+    password: ${CDC_MYSQL_PASSWORD:}
+    database: ${CDC_MYSQL_DATABASE:mini}
+    table: ${CDC_MYSQL_TABLE:user}
+    jdbc-url: ${CDC_MYSQL_JDBC_URL:jdbc:mysql://127.0.0.1:3306/mini?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
 
   kafka:
     topic: user-change-topic

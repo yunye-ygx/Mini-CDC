@@ -1,8 +1,23 @@
 HELP.md
 target/
-.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+
+### Local Config ###
+.env
+.env.*
+application-local.yml
+application-local.yaml
+application-*.local.yml
+application-*.local.yaml
+
+### Logs & Runtime ###
+logs/
+*.log
+*.out
+*.pid
+hs_err_pid*
+replay_pid*
 
 ### STS ###
 .apt_generated
@@ -14,10 +29,11 @@ target/
 .sts4-cache
 
 ### IntelliJ IDEA ###
-.idea
+.idea/
 *.iws
 *.iml
 *.ipr
+out/
 
 ### NetBeans ###
 /nbproject/private/
@@ -31,3 +47,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### OS Files ###
+.DS_Store
+Thumbs.db
