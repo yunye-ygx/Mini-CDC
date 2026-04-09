@@ -3,11 +3,13 @@ package com.yunye.mncdc.service;
 import com.github.shyiko.mysql.binlog.BinaryLogClient;
 import com.github.shyiko.mysql.binlog.event.Event;
 import com.github.shyiko.mysql.binlog.event.EventData;
+import com.github.shyiko.mysql.binlog.event.EventHeaderV4;
 import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.event.TableMapEventData;
 import com.github.shyiko.mysql.binlog.event.UpdateRowsEventData;
 import com.github.shyiko.mysql.binlog.event.WriteRowsEventData;
 import com.yunye.mncdc.config.MiniCdcProperties;
+import com.yunye.mncdc.model.BinlogCheckpoint;
 import com.yunye.mncdc.model.CdcEventMessage;
 import com.yunye.mncdc.model.TableMetadata;
 import lombok.RequiredArgsConstructor;
@@ -22,9 +24,12 @@ import java.sql.Timestamp;
 import java.time.temporal.TemporalAccessor;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -41,6 +46,8 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
     private final TableMetadataService tableMetadataService;
 
     private final CdcEventPublisher cdcEventPublisher;
+
+    private final CheckpointStore checkpointStore;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -59,7 +66,7 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         }
         try {
             tableMetadata = tableMetadataService.getConfiguredTableMetadata();
-            client = createClient();
+            client = createClient(resolveStartupCheckpoint());
             executorService.submit(this::connectSafely);
             log.info("Mini CDC listener starting for {}.{}", tableMetadata.database(), tableMetadata.table());
         } catch (RuntimeException exception) {
@@ -97,7 +104,7 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         return true;
     }
 
-    private BinaryLogClient createClient() {
+    private BinaryLogClient createClient(BinlogCheckpoint startupCheckpoint) {
         MiniCdcProperties.Mysql mysql = properties.getMysql();
         BinaryLogClient binaryLogClient = new BinaryLogClient(
                 mysql.getHost(),
@@ -107,6 +114,16 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         );
         binaryLogClient.setServerId(mysql.getServerId());
         binaryLogClient.setKeepAlive(true);
+        if (startupCheckpoint != null) {
+            binaryLogClient.setBinlogFilename(startupCheckpoint.binlogFilename());
+            binaryLogClient.setBinlogPosition(startupCheckpoint.binlogPosition());
+            log.info(
+                    "CDC startup checkpoint resolved to {}:{} for connector {}.",
+                    startupCheckpoint.binlogFilename(),
+                    startupCheckpoint.binlogPosition(),
+                    startupCheckpoint.connectorName()
+            );
+        }
         binaryLogClient.registerEventListener(this::handleEvent);
         return binaryLogClient;
     }
@@ -115,13 +132,19 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         try {
             client.connect();
         } catch (IOException exception) {
+            boolean shuttingDown = !running.get();
             running.set(false);
+            if (shuttingDown || (client != null && !client.isConnected())) {
+                log.info("Binlog listener disconnected.");
+                return;
+            }
             log.error("Binlog listener stopped because MySQL connection failed.", exception);
         }
     }
 
     private void handleEvent(Event event) {
-        EventType eventType = event.getHeader().getEventType();
+        EventHeaderV4 header = asHeaderV4(event);
+        EventType eventType = header.getEventType();
         EventData eventData = event.getData();
         if (eventType == EventType.TABLE_MAP && eventData instanceof TableMapEventData tableMap) {
             tableMappings.put(tableMap.getTableId(), new QualifiedTable(tableMap.getDatabase(), tableMap.getTable()));
@@ -132,54 +155,64 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         }
         try {
             if (eventType == EventType.EXT_WRITE_ROWS || eventType == EventType.WRITE_ROWS) {
-                handleInsert((WriteRowsEventData) eventData);
+                handleInsert((WriteRowsEventData) eventData, checkpointFor(header));
             } else if (eventType == EventType.EXT_UPDATE_ROWS || eventType == EventType.UPDATE_ROWS) {
-                handleUpdate((UpdateRowsEventData) eventData);
+                handleUpdate((UpdateRowsEventData) eventData, checkpointFor(header));
             }
         } catch (Exception exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to process binlog event {}", eventType, exception);
+            stopAfterFailure();
         }
     }
 
-    private void handleInsert(WriteRowsEventData eventData) {
+    private void handleInsert(WriteRowsEventData eventData, BinlogCheckpoint checkpoint)
+            throws ExecutionException, InterruptedException {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        for (Serializable[] row : eventData.getRows()) {
-            Map<String, Object> after = toRowMap(row);
-            Map<String, Object> primaryKey = extractPrimaryKey(after);
-            CdcEventMessage message = CdcEventMessage.builder()
-                    .database(tableMetadata.database())
-                    .table(tableMetadata.table())
-                    .eventType("INSERT")
-                    .primaryKey(primaryKey)
-                    .before(null)
-                    .after(after)
-                    .timestamp(System.currentTimeMillis())
-                    .build();
-            cdcEventPublisher.publish(message);
-        }
+        List<CdcEventMessage> messages = eventData.getRows().stream()
+                .map(row -> {
+                    Map<String, Object> after = toRowMap(row);
+                    Map<String, Object> primaryKey = extractPrimaryKey(after);
+                    return CdcEventMessage.builder()
+                            .database(tableMetadata.database())
+                            .table(tableMetadata.table())
+                            .eventType("INSERT")
+                            .primaryKey(primaryKey)
+                            .before(null)
+                            .after(after)
+                            .timestamp(System.currentTimeMillis())
+                            .build();
+                })
+                .toList();
+        publishAndCommit(messages, checkpoint);
     }
 
-    private void handleUpdate(UpdateRowsEventData eventData) {
+    private void handleUpdate(UpdateRowsEventData eventData, BinlogCheckpoint checkpoint)
+            throws ExecutionException, InterruptedException {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        for (Map.Entry<Serializable[], Serializable[]> row : eventData.getRows()) {
-            Map<String, Object> before = toRowMap(row.getKey());
-            Map<String, Object> after = toRowMap(row.getValue());
-            Map<String, Object> primaryKey = extractPrimaryKey(after);
-            CdcEventMessage message = CdcEventMessage.builder()
-                    .database(tableMetadata.database())
-                    .table(tableMetadata.table())
-                    .eventType("UPDATE")
-                    .primaryKey(primaryKey)
-                    .before(extractChangedBefore(before, after))
-                    .after(after)
-                    .timestamp(System.currentTimeMillis())
-                    .build();
-            cdcEventPublisher.publish(message);
-        }
+        List<CdcEventMessage> messages = eventData.getRows().stream()
+                .map(row -> {
+                    Map<String, Object> before = toRowMap(row.getKey());
+                    Map<String, Object> after = toRowMap(row.getValue());
+                    Map<String, Object> primaryKey = extractPrimaryKey(after);
+                    return CdcEventMessage.builder()
+                            .database(tableMetadata.database())
+                            .table(tableMetadata.table())
+                            .eventType("UPDATE")
+                            .primaryKey(primaryKey)
+                            .before(extractChangedBefore(before, after))
+                            .after(after)
+                            .timestamp(System.currentTimeMillis())
+                            .build();
+                })
+                .toList();
+        publishAndCommit(messages, checkpoint);
     }
 
     private boolean isConfiguredTable(long tableId) {
@@ -189,6 +222,86 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         }
         return Objects.equals(tableMetadata.database(), qualifiedTable.database())
                 && Objects.equals(tableMetadata.table(), qualifiedTable.table());
+    }
+
+    private void publishAndCommit(List<CdcEventMessage> messages, BinlogCheckpoint checkpoint)
+            throws ExecutionException, InterruptedException {
+        for (CdcEventMessage message : messages) {
+            cdcEventPublisher.publish(message).get();
+        }
+        if (properties.getCheckpoint().isEnabled()) {
+            checkpointStore.save(checkpoint);
+        }
+    }
+
+    private BinlogCheckpoint resolveStartupCheckpoint() {
+        if (!properties.getCheckpoint().isEnabled()) {
+            log.info("Checkpoint persistence is disabled. Binlog recovery will use BinaryLogClient defaults.");
+            return null;
+        }
+        Optional<BinlogCheckpoint> storedCheckpoint = checkpointStore.load();
+        if (storedCheckpoint.isPresent()) {
+            BinlogCheckpoint checkpoint = storedCheckpoint.get();
+            validateCheckpoint(checkpoint);
+            return checkpoint;
+        }
+        if (properties.getCheckpoint().getStartupStrategy() == MiniCdcProperties.StartupStrategy.LATEST) {
+            BinlogCheckpoint latestCheckpoint = checkpointStore.loadLatestServerCheckpoint();
+            log.info(
+                    "No stored checkpoint found for connector {}. Starting from latest MySQL position {}:{}.",
+                    latestCheckpoint.connectorName(),
+                    latestCheckpoint.binlogFilename(),
+                    latestCheckpoint.binlogPosition()
+            );
+            return latestCheckpoint;
+        }
+        throw new IllegalStateException("Unsupported startup strategy: " + properties.getCheckpoint().getStartupStrategy());
+    }
+
+    private void validateCheckpoint(BinlogCheckpoint checkpoint) {
+        if (!Objects.equals(tableMetadata.database(), checkpoint.databaseName())
+                || !Objects.equals(tableMetadata.table(), checkpoint.tableName())) {
+            throw new IllegalStateException(
+                    "Stored checkpoint does not match configured table: "
+                            + checkpoint.databaseName()
+                            + "."
+                            + checkpoint.tableName()
+            );
+        }
+    }
+
+    private BinlogCheckpoint checkpointFor(EventHeaderV4 header) {
+        return new BinlogCheckpoint(
+                properties.getCheckpoint().getConnectorName(),
+                tableMetadata.database(),
+                tableMetadata.table(),
+                client.getBinlogFilename(),
+                header.getNextPosition()
+        );
+    }
+
+    private EventHeaderV4 asHeaderV4(Event event) {
+        if (event.getHeader() instanceof EventHeaderV4 header) {
+            return header;
+        }
+        throw new IllegalStateException("Unsupported binlog event header type: " + event.getHeader().getClass().getName());
+    }
+
+    private void stopAfterFailure() {
+        running.set(false);
+        tableMappings.clear();
+        BinaryLogClient currentClient = client;
+        if (currentClient == null) {
+            return;
+        }
+        Thread shutdownThread = new NamedThreadFactory().newThread(() -> {
+            try {
+                currentClient.disconnect();
+            } catch (IOException ioException) {
+                log.warn("Failed to disconnect binlog client after processing error.", ioException);
+            }
+        });
+        shutdownThread.start();
     }
 
     private Map<String, Object> toRowMap(Serializable[] row) {

@@ -6,9 +6,11 @@ import com.yunye.mncdc.config.MiniCdcProperties;
 import com.yunye.mncdc.model.CdcEventMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.Map;
 import java.util.StringJoiner;
 
@@ -23,13 +25,13 @@ public class CdcEventPublisher {
 
     private final MiniCdcProperties properties;
 
-    public void publish(CdcEventMessage message) {
+    public CompletableFuture<SendResult<String, String>> publish(CdcEventMessage message) {
         try {
             String payload = objectMapper.writeValueAsString(message);
             if (properties.isLogEventJson()) {
                 log.info("{}", payload);
             }
-            kafkaTemplate.send(properties.getKafka().getTopic(), buildKey(message.getPrimaryKey()), payload);
+            return kafkaTemplate.send(properties.getKafka().getTopic(), buildKey(message.getPrimaryKey()), payload);
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Failed to serialize CDC event.", exception);
         }

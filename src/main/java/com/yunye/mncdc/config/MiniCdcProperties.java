@@ -17,6 +17,8 @@ public class MiniCdcProperties {
 
     private Redis redis = new Redis();
 
+    private Checkpoint checkpoint = new Checkpoint();
+
     @Data
     public static class Mysql {
 
@@ -47,5 +49,19 @@ public class MiniCdcProperties {
     public static class Redis {
 
         private String keyPrefix = "user:";
+    }
+
+    @Data
+    public static class Checkpoint {
+
+        private boolean enabled = true;
+
+        private String connectorName = "mini-cdc-default";
+
+        private StartupStrategy startupStrategy = StartupStrategy.LATEST;
+    }
+
+    public enum StartupStrategy {
+        LATEST
     }
 }
