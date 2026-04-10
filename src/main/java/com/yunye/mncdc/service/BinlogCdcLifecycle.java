@@ -8,9 +8,11 @@ import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.event.TableMapEventData;
 import com.github.shyiko.mysql.binlog.event.UpdateRowsEventData;
 import com.github.shyiko.mysql.binlog.event.WriteRowsEventData;
+import com.github.shyiko.mysql.binlog.event.XidEventData;
 import com.yunye.mncdc.config.MiniCdcProperties;
 import com.yunye.mncdc.model.BinlogCheckpoint;
-import com.yunye.mncdc.model.CdcEventMessage;
+import com.yunye.mncdc.model.CdcTransactionEvent;
+import com.yunye.mncdc.model.CdcTransactionRow;
 import com.yunye.mncdc.model.TableMetadata;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +24,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.sql.Timestamp;
 import java.time.temporal.TemporalAccessor;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,6 +58,8 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
 
     private final Map<Long, QualifiedTable> tableMappings = new ConcurrentHashMap<>();
 
+    private final List<CdcTransactionRow> bufferedTransactionRows = new ArrayList<>();
+
     private volatile BinaryLogClient client;
 
     private volatile TableMetadata tableMetadata;
@@ -87,6 +92,7 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         }
         executorService.shutdownNow();
         tableMappings.clear();
+        bufferedTransactionRows.clear();
     }
 
     @Override
@@ -155,9 +161,11 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         }
         try {
             if (eventType == EventType.EXT_WRITE_ROWS || eventType == EventType.WRITE_ROWS) {
-                handleInsert((WriteRowsEventData) eventData, checkpointFor(header));
+                handleInsert((WriteRowsEventData) eventData);
             } else if (eventType == EventType.EXT_UPDATE_ROWS || eventType == EventType.UPDATE_ROWS) {
-                handleUpdate((UpdateRowsEventData) eventData, checkpointFor(header));
+                handleUpdate((UpdateRowsEventData) eventData);
+            } else if (eventType == EventType.XID) {
+                handleTransactionCommit((XidEventData) eventData, checkpointFor(header), header.getTimestamp());
             }
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) {
@@ -168,51 +176,30 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         }
     }
 
-    private void handleInsert(WriteRowsEventData eventData, BinlogCheckpoint checkpoint)
-            throws ExecutionException, InterruptedException {
+    private void handleInsert(WriteRowsEventData eventData) {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        List<CdcEventMessage> messages = eventData.getRows().stream()
+        bufferedTransactionRows.addAll(eventData.getRows().stream()
                 .map(row -> {
                     Map<String, Object> after = toRowMap(row);
                     Map<String, Object> primaryKey = extractPrimaryKey(after);
-                    return CdcEventMessage.builder()
-                            .database(tableMetadata.database())
-                            .table(tableMetadata.table())
-                            .eventType("INSERT")
-                            .primaryKey(primaryKey)
-                            .before(null)
-                            .after(after)
-                            .timestamp(System.currentTimeMillis())
-                            .build();
+                    return new CdcTransactionRow("INSERT", primaryKey, after);
                 })
-                .toList();
-        publishAndCommit(messages, checkpoint);
+                .toList());
     }
 
-    private void handleUpdate(UpdateRowsEventData eventData, BinlogCheckpoint checkpoint)
-            throws ExecutionException, InterruptedException {
+    private void handleUpdate(UpdateRowsEventData eventData) {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        List<CdcEventMessage> messages = eventData.getRows().stream()
+        bufferedTransactionRows.addAll(eventData.getRows().stream()
                 .map(row -> {
-                    Map<String, Object> before = toRowMap(row.getKey());
                     Map<String, Object> after = toRowMap(row.getValue());
                     Map<String, Object> primaryKey = extractPrimaryKey(after);
-                    return CdcEventMessage.builder()
-                            .database(tableMetadata.database())
-                            .table(tableMetadata.table())
-                            .eventType("UPDATE")
-                            .primaryKey(primaryKey)
-                            .before(extractChangedBefore(before, after))
-                            .after(after)
-                            .timestamp(System.currentTimeMillis())
-                            .build();
+                    return new CdcTransactionRow("UPDATE", primaryKey, after);
                 })
-                .toList();
-        publishAndCommit(messages, checkpoint);
+                .toList());
     }
 
     private boolean isConfiguredTable(long tableId) {
@@ -224,14 +211,37 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
                 && Objects.equals(tableMetadata.table(), qualifiedTable.table());
     }
 
-    private void publishAndCommit(List<CdcEventMessage> messages, BinlogCheckpoint checkpoint)
+    private void handleTransactionCommit(XidEventData xidEventData, BinlogCheckpoint checkpoint, long eventTimestamp)
             throws ExecutionException, InterruptedException {
-        for (CdcEventMessage message : messages) {
-            cdcEventPublisher.publish(message).get();
+        if (bufferedTransactionRows.isEmpty()) {
+            return;
         }
+        CdcTransactionEvent transactionEvent = new CdcTransactionEvent(
+                buildTransactionId(xidEventData.getXid(), checkpoint), //用来做后续判断消费者是否重复消费
+                properties.getCheckpoint().getConnectorName(),
+                tableMetadata.database(),
+                tableMetadata.table(),
+                checkpoint.binlogFilename(),
+                xidEventData.getXid(),
+                checkpoint.binlogPosition(),
+                eventTimestamp > 0 ? eventTimestamp : System.currentTimeMillis(),
+                List.copyOf(bufferedTransactionRows)
+        );
+        cdcEventPublisher.publishTransaction(transactionEvent).get();
         if (properties.getCheckpoint().isEnabled()) {
             checkpointStore.save(checkpoint);
         }
+        bufferedTransactionRows.clear();
+    }
+
+    private String buildTransactionId(long xid, BinlogCheckpoint checkpoint) {
+        return properties.getCheckpoint().getConnectorName()
+                + ":"
+                + checkpoint.binlogFilename()
+                + ":"
+                + xid
+                + ":"
+                + checkpoint.binlogPosition();
     }
 
     private BinlogCheckpoint resolveStartupCheckpoint() {
@@ -290,6 +300,7 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
     private void stopAfterFailure() {
         running.set(false);
         tableMappings.clear();
+        bufferedTransactionRows.clear();
         BinaryLogClient currentClient = client;
         if (currentClient == null) {
             return;
@@ -318,17 +329,6 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
             primaryKey.put(primaryKeyColumn, row.get(primaryKeyColumn));
         }
         return primaryKey;
-    }
-
-    private Map<String, Object> extractChangedBefore(Map<String, Object> before, Map<String, Object> after) {
-        Map<String, Object> changed = new LinkedHashMap<>();
-        before.forEach((column, beforeValue) -> {
-            Object afterValue = after.get(column);
-            if (!Objects.equals(beforeValue, afterValue)) {
-                changed.put(column, beforeValue);
-            }
-        });
-        return changed;
     }
 
     private Object normalizeValue(Object value) {
