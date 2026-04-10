@@ -3,16 +3,16 @@ package com.yunye.mncdc.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yunye.mncdc.config.MiniCdcProperties;
-import com.yunye.mncdc.model.CdcEventMessage;
+import com.yunye.mncdc.model.CdcTransactionEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
-
-import java.util.Map;
-import java.util.StringJoiner;
 
 @Slf4j
 @Component
@@ -22,28 +22,64 @@ public class RedisSyncConsumer {
 
     private final ObjectMapper objectMapper;
 
-    private final StringRedisTemplate stringRedisTemplate;
+    private final RedisTransactionApplier redisTransactionApplier;
 
     private final MiniCdcProperties properties;
 
-    @KafkaListener(topics = "${mini-cdc.kafka.topic}", groupId = "${spring.kafka.consumer.group-id}")
-    public void consume(String payload) {
+    @KafkaListener(topics = "${mini-cdc.kafka.topic}")
+    public void consume(ConsumerRecord<String, String> record,
+                        @Header(value = KafkaHeaders.DELIVERY_ATTEMPT, required = false) Integer deliveryAttempt,
+                        Acknowledgment acknowledgment) {
+        CdcTransactionEvent transactionEvent = deserialize(record.value());
+
+        if (transactionEvent.events() == null || transactionEvent.events().isEmpty()) {
+            acknowledgment.acknowledge();
+            return;
+        }
+
         try {
-            CdcEventMessage message = objectMapper.readValue(payload, CdcEventMessage.class);
-            if (message.getAfter() == null || message.getPrimaryKey() == null || message.getPrimaryKey().isEmpty()) {
-                return;
+            RedisTransactionApplier.ApplyResult result = redisTransactionApplier.apply(transactionEvent);
+            if (result == null) {
+                throw new IllegalStateException("Unexpected Redis apply result: null for transaction " + transactionEvent.transactionId());
             }
-            String redisKey = properties.getRedis().getKeyPrefix() + buildPrimaryKeySuffix(message.getPrimaryKey());
-            String redisValue = objectMapper.writeValueAsString(message.getAfter());
-            stringRedisTemplate.opsForValue().set(redisKey, redisValue);
-        } catch (JsonProcessingException exception) {
-            log.error("Failed to parse CDC message from Kafka.", exception);
+            if (result != RedisTransactionApplier.ApplyResult.APPLIED
+                    && result != RedisTransactionApplier.ApplyResult.DUPLICATE) {
+                throw new IllegalStateException("Unexpected Redis apply result: " + result + " for transaction " + transactionEvent.transactionId());
+            }
+            log.info("Redis sync consumer {} transaction {}", result, transactionEvent.transactionId());
+            acknowledgment.acknowledge();
+        } catch (RuntimeException exception) {
+            int attempt = deliveryAttempt == null ? 1 : deliveryAttempt;
+            int maxAttempts = properties.getKafka().getConsumer().getMaxAttempts();
+            log.error(
+                    "Redis sync failed transactionId={} topic={} partition={} offset={} attempt={}/{}",
+                    transactionEvent.transactionId(),
+                    record.topic(),
+                    record.partition(),
+                    record.offset(),
+                    attempt,
+                    maxAttempts,
+                    exception
+            );
+            throw exception;
         }
     }
 
-    private String buildPrimaryKeySuffix(Map<String, Object> primaryKey) {
-        StringJoiner joiner = new StringJoiner(":");
-        primaryKey.values().forEach(value -> joiner.add(String.valueOf(value)));
-        return joiner.toString();
+    private CdcTransactionEvent deserialize(String payload) {
+        if (payload == null) {
+            throw new CdcMessageParseException("Failed to parse CDC transaction message from Kafka: payload is null.", null);
+        }
+        if ("null".equals(payload.trim())) {
+            throw new CdcMessageParseException("Failed to parse CDC transaction message from Kafka: payload is JSON null.", null);
+        }
+        try {
+            CdcTransactionEvent transactionEvent = objectMapper.readValue(payload, CdcTransactionEvent.class);
+            if (transactionEvent == null) {
+                throw new CdcMessageParseException("Failed to parse CDC transaction message from Kafka: deserialized message is null.", null);
+            }
+            return transactionEvent;
+        } catch (JsonProcessingException exception) {
+            throw new CdcMessageParseException("Failed to parse CDC transaction message from Kafka.", exception);
+        }
     }
 }

@@ -3,6 +3,8 @@ package com.yunye.mncdc.config;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.time.Duration;
+
 @Data
 @ConfigurationProperties(prefix = "mini-cdc")
 public class MiniCdcProperties {
@@ -16,6 +18,8 @@ public class MiniCdcProperties {
     private Kafka kafka = new Kafka();
 
     private Redis redis = new Redis();
+
+    private Checkpoint checkpoint = new Checkpoint();
 
     @Data
     public static class Mysql {
@@ -41,11 +45,36 @@ public class MiniCdcProperties {
     public static class Kafka {
 
         private String topic = "user-change-topic";
+        private Consumer consumer = new Consumer();
+
+        @Data
+        public static class Consumer {
+
+            private int maxAttempts = 4;
+
+            private Duration retryBackoff = Duration.ofSeconds(1);
+        }
     }
 
     @Data
     public static class Redis {
 
         private String keyPrefix = "user:";
+
+        private String transactionDonePrefix = "mini-cdc:txn:done:";
+    }
+
+    @Data
+    public static class Checkpoint {
+
+        private boolean enabled = true;
+
+        private String connectorName = "mini-cdc-default";
+
+        private StartupStrategy startupStrategy = StartupStrategy.LATEST;
+    }
+
+    public enum StartupStrategy {
+        LATEST
     }
 }
