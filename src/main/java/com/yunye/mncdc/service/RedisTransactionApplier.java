@@ -40,11 +40,24 @@ public class RedisTransactionApplier {
         List<Object> values = new ArrayList<>();
         keys.add(buildDoneKey(transactionEvent.transactionId()));
         for (CdcTransactionRow event : transactionEvent.events()) {
-            if (event.primaryKey() == null || event.primaryKey().isEmpty() || event.after() == null) {
-                throw new IllegalStateException("CDC transaction row must contain primaryKey and after.");
+            if (event.primaryKey() == null || event.primaryKey().isEmpty()) {
+                throw new IllegalStateException("CDC transaction row must contain primaryKey.");
             }
             keys.add(buildBusinessKey(event.primaryKey()));
-            values.add(toJson(event.after()));
+            String eventType = event.eventType();
+            if ("DELETE".equals(eventType)) {
+                values.add("DEL");
+                continue;
+            }
+            if ("INSERT".equals(eventType) || "UPDATE".equals(eventType)) {
+                if (event.after() == null) {
+                    throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE.");
+                }
+                values.add("SET");
+                values.add(toJson(event.after()));
+                continue;
+            }
+            throw new IllegalStateException("Unexpected CDC transaction eventType: " + eventType);
         }
         values.add("1");
         String result = stringRedisTemplate.execute(APPLY_TRANSACTION_SCRIPT, keys, values.toArray());
