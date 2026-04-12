@@ -1,4 +1,4 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.exception;
 
 public class CdcMessageParseException extends RuntimeException {
 

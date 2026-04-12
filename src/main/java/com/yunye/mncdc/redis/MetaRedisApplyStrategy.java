@@ -1,10 +1,12 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.redis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yunye.mncdc.config.MiniCdcProperties;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import com.yunye.mncdc.model.CdcTransactionRow;
+import com.yunye.mncdc.model.RedisRowMetadata;
+import com.yunye.mncdc.model.RedisRowVersion;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -18,7 +20,7 @@ import java.util.StringJoiner;
 
 @Service
 @RequiredArgsConstructor
-public class SimpleRedisApplyStrategy implements RedisApplyStrategy {
+public class MetaRedisApplyStrategy implements RedisApplyStrategy {
 
     private static final DefaultRedisScript<String> APPLY_TRANSACTION_SCRIPT = createApplyTransactionScript();
 
@@ -30,7 +32,7 @@ public class SimpleRedisApplyStrategy implements RedisApplyStrategy {
 
     private static DefaultRedisScript<String> createApplyTransactionScript() {
         DefaultRedisScript<String> script = new DefaultRedisScript<>();
-        script.setLocation(new ClassPathResource("lua/apply-transaction.lua"));
+        script.setLocation(new ClassPathResource("lua/apply-transaction-meta.lua"));
         script.setResultType(String.class);
         return script;
     }
@@ -39,46 +41,44 @@ public class SimpleRedisApplyStrategy implements RedisApplyStrategy {
     public RedisTransactionApplier.ApplyResult apply(CdcTransactionEvent transactionEvent) {
         List<String> keys = new ArrayList<>();
         List<Object> values = new ArrayList<>();
-        keys.add(buildDoneKey(transactionEvent.transactionId()));
-        for (CdcTransactionRow event : transactionEvent.events()) {
-            if (event.primaryKey() == null || event.primaryKey().isEmpty()) {
+        keys.add(properties.getRedis().getTransactionDonePrefix() + transactionEvent.transactionId());
+        for (CdcTransactionRow row : transactionEvent.events()) {
+            if (row.primaryKey() == null || row.primaryKey().isEmpty()) {
                 throw new IllegalStateException("CDC transaction row must contain primaryKey.");
             }
-            keys.add(buildBusinessKey(event.primaryKey()));
-            String eventType = event.eventType();
-            if ("DELETE".equals(eventType)) {
-                values.add("DEL");
-                continue;
+            if (!"DELETE".equals(row.eventType()) && row.after() == null) {
+                throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE.");
             }
-            if ("INSERT".equals(eventType) || "UPDATE".equals(eventType)) {
-                if (event.after() == null) {
-                    throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE.");
-                }
-                values.add("SET");
-                values.add(toJson(event.after()));
-                continue;
-            }
-            throw new IllegalStateException("Unexpected CDC transaction eventType: " + eventType);
+
+            String primaryKeySuffix = buildPrimaryKeySuffix(row.primaryKey());
+            keys.add(properties.getRedis().getKeyPrefix() + primaryKeySuffix);
+            keys.add(properties.getRedis().getRowMetaPrefix() + transactionEvent.table() + ":" + primaryKeySuffix);
+
+            RedisRowMetadata metadata = new RedisRowMetadata(
+                    "DELETE".equals(row.eventType()),
+                    new RedisRowVersion(
+                            transactionEvent.binlogFilename(),
+                            transactionEvent.nextPosition(),
+                            row.eventIndex(),
+                            transactionEvent.transactionId()
+                    )
+            );
+
+            values.add(row.eventType());
+            values.add("DELETE".equals(row.eventType()) ? "" : toJson(row.after()));
+            values.add(toJson(metadata));
         }
         values.add("1");
         String result = stringRedisTemplate.execute(APPLY_TRANSACTION_SCRIPT, keys, values.toArray());
         return RedisTransactionApplier.ApplyResult.from(result);
     }
 
-    private String toJson(Map<String, Object> row) {
+    private String toJson(Object value) {
         try {
-            return objectMapper.writeValueAsString(row);
+            return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("Failed to serialize Redis row payload.", exception);
+            throw new IllegalStateException("Failed to serialize Redis metadata payload.", exception);
         }
-    }
-
-    private String buildDoneKey(String transactionId) {
-        return properties.getRedis().getTransactionDonePrefix() + transactionId;
-    }
-
-    private String buildBusinessKey(Map<String, Object> primaryKey) {
-        return properties.getRedis().getKeyPrefix() + buildPrimaryKeySuffix(primaryKey);
     }
 
     private String buildPrimaryKeySuffix(Map<String, Object> primaryKey) {

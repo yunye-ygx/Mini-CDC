@@ -1,4 +1,4 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.cdc;
 
 import com.github.shyiko.mysql.binlog.BinaryLogClient;
 import com.github.shyiko.mysql.binlog.event.Event;
@@ -9,7 +9,9 @@ import com.github.shyiko.mysql.binlog.event.DeleteRowsEventData;
 import com.github.shyiko.mysql.binlog.event.UpdateRowsEventData;
 import com.github.shyiko.mysql.binlog.event.WriteRowsEventData;
 import com.github.shyiko.mysql.binlog.event.XidEventData;
+import com.yunye.mncdc.checkpoint.CheckpointStore;
 import com.yunye.mncdc.config.MiniCdcProperties;
+import com.yunye.mncdc.metadata.TableMetadataService;
 import com.yunye.mncdc.model.BinlogCheckpoint;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import com.yunye.mncdc.model.CdcTransactionRow;

@@ -1,8 +1,9 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.redis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yunye.mncdc.config.MiniCdcProperties;
+import com.yunye.mncdc.exception.CdcMessageParseException;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

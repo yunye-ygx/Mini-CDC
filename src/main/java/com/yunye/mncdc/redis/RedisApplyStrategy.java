@@ -1,4 +1,4 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.redis;
 
 import com.yunye.mncdc.model.CdcTransactionEvent;
 

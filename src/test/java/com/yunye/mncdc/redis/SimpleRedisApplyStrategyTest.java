@@ -1,4 +1,4 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yunye.mncdc.config.MiniCdcProperties;

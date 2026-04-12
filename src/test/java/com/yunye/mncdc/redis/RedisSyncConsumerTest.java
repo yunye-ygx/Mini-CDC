@@ -1,7 +1,8 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yunye.mncdc.config.MiniCdcProperties;
+import com.yunye.mncdc.exception.CdcMessageParseException;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import com.yunye.mncdc.model.CdcTransactionRow;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
