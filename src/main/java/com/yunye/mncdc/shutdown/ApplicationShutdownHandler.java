@@ -1,4 +1,4 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.shutdown;
 
 public interface ApplicationShutdownHandler {
 

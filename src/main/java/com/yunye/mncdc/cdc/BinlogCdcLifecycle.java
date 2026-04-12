@@ -1,4 +1,4 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.cdc;
 
 import com.github.shyiko.mysql.binlog.BinaryLogClient;
 import com.github.shyiko.mysql.binlog.event.Event;
@@ -6,10 +6,13 @@ import com.github.shyiko.mysql.binlog.event.EventData;
 import com.github.shyiko.mysql.binlog.event.EventHeaderV4;
 import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.event.TableMapEventData;
+import com.github.shyiko.mysql.binlog.event.DeleteRowsEventData;
 import com.github.shyiko.mysql.binlog.event.UpdateRowsEventData;
 import com.github.shyiko.mysql.binlog.event.WriteRowsEventData;
 import com.github.shyiko.mysql.binlog.event.XidEventData;
+import com.yunye.mncdc.checkpoint.CheckpointStore;
 import com.yunye.mncdc.config.MiniCdcProperties;
+import com.yunye.mncdc.metadata.TableMetadataService;
 import com.yunye.mncdc.model.BinlogCheckpoint;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import com.yunye.mncdc.model.CdcTransactionRow;
@@ -164,6 +167,8 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
                 handleInsert((WriteRowsEventData) eventData);
             } else if (eventType == EventType.EXT_UPDATE_ROWS || eventType == EventType.UPDATE_ROWS) {
                 handleUpdate((UpdateRowsEventData) eventData);
+            } else if (eventType == EventType.EXT_DELETE_ROWS || eventType == EventType.DELETE_ROWS) {
+                handleDelete((DeleteRowsEventData) eventData);
             } else if (eventType == EventType.XID) {
                 handleTransactionCommit((XidEventData) eventData, checkpointFor(header), header.getTimestamp());
             }
@@ -180,26 +185,47 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        bufferedTransactionRows.addAll(eventData.getRows().stream()
-                .map(row -> {
-                    Map<String, Object> after = toRowMap(row);
-                    Map<String, Object> primaryKey = extractPrimaryKey(after);
-                    return new CdcTransactionRow("INSERT", primaryKey, after);
-                })
-                .toList());
+        for (Serializable[] row : eventData.getRows()) {
+            Map<String, Object> after = toRowMap(row);
+            appendBufferedRow("INSERT", extractPrimaryKey(after), null, after);
+        }
     }
 
     private void handleUpdate(UpdateRowsEventData eventData) {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        bufferedTransactionRows.addAll(eventData.getRows().stream()
-                .map(row -> {
-                    Map<String, Object> after = toRowMap(row.getValue());
-                    Map<String, Object> primaryKey = extractPrimaryKey(after);
-                    return new CdcTransactionRow("UPDATE", primaryKey, after);
-                })
-                .toList());
+        for (Map.Entry<Serializable[], Serializable[]> row : eventData.getRows()) {
+            Map<String, Object> before = toRowMap(row.getKey());
+            Map<String, Object> after = toRowMap(row.getValue());
+            assertPrimaryKeyUnchanged(before, after);
+            appendBufferedRow("UPDATE", extractPrimaryKey(after), before, after);
+        }
+    }
+
+    private void handleDelete(DeleteRowsEventData eventData) {
+        if (!isConfiguredTable(eventData.getTableId())) {
+            return;
+        }
+        for (Serializable[] row : eventData.getRows()) {
+            Map<String, Object> before = toRowMap(row);
+            appendBufferedRow("DELETE", extractPrimaryKey(before), before, null);
+        }
+    }
+
+    private void appendBufferedRow(
+            String eventType,
+            Map<String, Object> primaryKey,
+            Map<String, Object> before,
+            Map<String, Object> after
+    ) {
+        bufferedTransactionRows.add(new CdcTransactionRow(
+                bufferedTransactionRows.size(),
+                eventType,
+                primaryKey,
+                before,
+                after
+        ));
     }
 
     private boolean isConfiguredTable(long tableId) {
@@ -329,6 +355,14 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
             primaryKey.put(primaryKeyColumn, row.get(primaryKeyColumn));
         }
         return primaryKey;
+    }
+
+    private void assertPrimaryKeyUnchanged(Map<String, Object> before, Map<String, Object> after) {
+        Map<String, Object> beforePrimaryKey = extractPrimaryKey(before);
+        Map<String, Object> afterPrimaryKey = extractPrimaryKey(after);
+        if (!beforePrimaryKey.equals(afterPrimaryKey)) {
+            throw new IllegalStateException("Primary key mutation is not supported.");
+        }
     }
 
     private Object normalizeValue(Object value) {

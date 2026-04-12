@@ -1,27 +1,40 @@
 server:
-  port: 8080
+  port: 8088
 
 spring:
   application:
     name: mini-cdc-sync
+  datasource:
+    url: ${mini-cdc.mysql.jdbc-url}
+    username: ${mini-cdc.mysql.username}
+    password: ${mini-cdc.mysql.password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:192.168.100.128:9092}
     producer:
+      acks: all
+      retries: 3
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
     consumer:
+      enable-auto-commit: false
       group-id: mini-cdc-redis-consumer
       auto-offset-reset: latest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     listener:
+      concurrency: 1
       missing-topics-fatal: false
       auto-startup: ${mini-cdc.enabled:false}
+      ack-mode: MANUAL_IMMEDIATE
   data:
     redis:
-      host: ${REDIS_HOST:127.0.0.1}
+      host: ${REDIS_HOST:192.168.100.128}
       port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:}
+      password: ${REDIS_PASSWORD:123456}
       database: ${REDIS_DATABASE:0}
       timeout: ${REDIS_TIMEOUT:5s}
 
@@ -31,18 +44,30 @@ mini-cdc:
   mysql:
     host: ${CDC_MYSQL_HOST:127.0.0.1}
     port: ${CDC_MYSQL_PORT:3306}
-    username: ${CDC_MYSQL_USERNAME:}
-    password: ${CDC_MYSQL_PASSWORD:}
+    username: ${CDC_MYSQL_USERNAME:root}
+    password: ${CDC_MYSQL_PASSWORD:1234}
     database: ${CDC_MYSQL_DATABASE:mini}
     table: ${CDC_MYSQL_TABLE:user}
     jdbc-url: ${CDC_MYSQL_JDBC_URL:jdbc:mysql://127.0.0.1:3306/mini?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
 
   kafka:
     topic: user-change-topic
+    consumer:
+      max-attempts: 4
+      retry-backoff: 1s
+  checkpoint:
+    enabled: true
+    connector-name: ${CDC_CONNECTOR_NAME:mini-user-sync}
+    startup-strategy: ${CDC_STARTUP_STRATEGY:LATEST}
   redis:
     key-prefix: "user:"
+    transaction-done-prefix: "mini-cdc:txn:done:"
+    row-meta-prefix: "mini-cdc:row:meta:"
+    apply-mode: simple
 
 logging:
   level:
     com.yunye.mncdc: info
+    org.apache.kafka: warn
+    org.springframework.kafka: warn
     org.apache.kafka.clients.consumer.ConsumerConfig: warn

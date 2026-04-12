@@ -1,4 +1,4 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.redis;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,7 +18,7 @@ import java.util.StringJoiner;
 
 @Service
 @RequiredArgsConstructor
-public class RedisTransactionApplier {
+public class SimpleRedisApplyStrategy implements RedisApplyStrategy {
 
     private static final DefaultRedisScript<String> APPLY_TRANSACTION_SCRIPT = createApplyTransactionScript();
 
@@ -35,20 +35,34 @@ public class RedisTransactionApplier {
         return script;
     }
 
-    public ApplyResult apply(CdcTransactionEvent transactionEvent) {
+    @Override
+    public RedisTransactionApplier.ApplyResult apply(CdcTransactionEvent transactionEvent) {
         List<String> keys = new ArrayList<>();
         List<Object> values = new ArrayList<>();
         keys.add(buildDoneKey(transactionEvent.transactionId()));
         for (CdcTransactionRow event : transactionEvent.events()) {
-            if (event.primaryKey() == null || event.primaryKey().isEmpty() || event.after() == null) {
-                throw new IllegalStateException("CDC transaction row must contain primaryKey and after.");
+            if (event.primaryKey() == null || event.primaryKey().isEmpty()) {
+                throw new IllegalStateException("CDC transaction row must contain primaryKey.");
             }
             keys.add(buildBusinessKey(event.primaryKey()));
-            values.add(toJson(event.after()));
+            String eventType = event.eventType();
+            if ("DELETE".equals(eventType)) {
+                values.add("DEL");
+                continue;
+            }
+            if ("INSERT".equals(eventType) || "UPDATE".equals(eventType)) {
+                if (event.after() == null) {
+                    throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE.");
+                }
+                values.add("SET");
+                values.add(toJson(event.after()));
+                continue;
+            }
+            throw new IllegalStateException("Unexpected CDC transaction eventType: " + eventType);
         }
         values.add("1");
         String result = stringRedisTemplate.execute(APPLY_TRANSACTION_SCRIPT, keys, values.toArray());
-        return ApplyResult.from(result);
+        return RedisTransactionApplier.ApplyResult.from(result);
     }
 
     private String toJson(Map<String, Object> row) {
@@ -71,20 +85,5 @@ public class RedisTransactionApplier {
         StringJoiner joiner = new StringJoiner(":");
         primaryKey.values().forEach(value -> joiner.add(String.valueOf(value)));
         return joiner.toString();
-    }
-
-    public enum ApplyResult {
-        APPLIED,
-        DUPLICATE;
-
-        public static ApplyResult from(String value) {
-            if ("APPLIED".equals(value)) {
-                return APPLIED;
-            }
-            if ("DUPLICATE".equals(value)) {
-                return DUPLICATE;
-            }
-            throw new IllegalStateException("Unexpected Redis apply result: " + value);
-        }
     }
 }

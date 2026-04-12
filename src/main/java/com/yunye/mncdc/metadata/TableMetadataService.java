@@ -1,4 +1,4 @@
-package com.yunye.mncdc.service;
+package com.yunye.mncdc.metadata;
 
 import com.yunye.mncdc.config.MiniCdcProperties;
 import com.yunye.mncdc.mapper.TableMetadataMapper;
