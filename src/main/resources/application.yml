@@ -62,6 +62,8 @@ mini-cdc:
   redis:
     key-prefix: "user:"
     transaction-done-prefix: "mini-cdc:txn:done:"
+    row-meta-prefix: "mini-cdc:row:meta:"
+    apply-mode: simple
 
 logging:
   level:

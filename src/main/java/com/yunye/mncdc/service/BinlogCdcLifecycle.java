@@ -183,41 +183,47 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        bufferedTransactionRows.addAll(eventData.getRows().stream()
-                .map(row -> {
-                    Map<String, Object> after = toRowMap(row);
-                    Map<String, Object> primaryKey = extractPrimaryKey(after);
-                    return new CdcTransactionRow("INSERT", primaryKey, null, after);
-                })
-                .toList());
+        for (Serializable[] row : eventData.getRows()) {
+            Map<String, Object> after = toRowMap(row);
+            appendBufferedRow("INSERT", extractPrimaryKey(after), null, after);
+        }
     }
 
     private void handleUpdate(UpdateRowsEventData eventData) {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        bufferedTransactionRows.addAll(eventData.getRows().stream()
-                .map(row -> {
-                    Map<String, Object> before = toRowMap(row.getKey());
-                    Map<String, Object> after = toRowMap(row.getValue());
-                    assertPrimaryKeyUnchanged(before, after);
-                    Map<String, Object> primaryKey = extractPrimaryKey(after);
-                    return new CdcTransactionRow("UPDATE", primaryKey, before, after);
-                })
-                .toList());
+        for (Map.Entry<Serializable[], Serializable[]> row : eventData.getRows()) {
+            Map<String, Object> before = toRowMap(row.getKey());
+            Map<String, Object> after = toRowMap(row.getValue());
+            assertPrimaryKeyUnchanged(before, after);
+            appendBufferedRow("UPDATE", extractPrimaryKey(after), before, after);
+        }
     }
 
     private void handleDelete(DeleteRowsEventData eventData) {
         if (!isConfiguredTable(eventData.getTableId())) {
             return;
         }
-        bufferedTransactionRows.addAll(eventData.getRows().stream()
-                .map(row -> {
-                    Map<String, Object> before = toRowMap(row);
-                    Map<String, Object> primaryKey = extractPrimaryKey(before);
-                    return new CdcTransactionRow("DELETE", primaryKey, before, null);
-                })
-                .toList());
+        for (Serializable[] row : eventData.getRows()) {
+            Map<String, Object> before = toRowMap(row);
+            appendBufferedRow("DELETE", extractPrimaryKey(before), before, null);
+        }
+    }
+
+    private void appendBufferedRow(
+            String eventType,
+            Map<String, Object> primaryKey,
+            Map<String, Object> before,
+            Map<String, Object> after
+    ) {
+        bufferedTransactionRows.add(new CdcTransactionRow(
+                bufferedTransactionRows.size(),
+                eventType,
+                primaryKey,
+                before,
+                after
+        ));
     }
 
     private boolean isConfiguredTable(long tableId) {

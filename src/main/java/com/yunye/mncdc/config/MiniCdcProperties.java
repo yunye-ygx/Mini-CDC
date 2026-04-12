@@ -62,6 +62,15 @@ public class MiniCdcProperties {
         private String keyPrefix = "user:";
 
         private String transactionDonePrefix = "mini-cdc:txn:done:";
+
+        private String rowMetaPrefix = "mini-cdc:row:meta:";
+
+        private ApplyMode applyMode = ApplyMode.SIMPLE;
+
+        public enum ApplyMode {
+            SIMPLE,
+            META
+        }
     }
 
     @Data
