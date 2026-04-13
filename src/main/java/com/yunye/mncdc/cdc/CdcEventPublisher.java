@@ -27,6 +27,10 @@ public class CdcEventPublisher {
         return publishPayload(transactionEvent.transactionId(), transactionEvent);
     }
 
+    public CompletableFuture<SendResult<String, String>> publishSnapshotPage(CdcTransactionEvent snapshotPageEvent) {
+        return publishPayload(snapshotPageEvent.transactionId(), snapshotPageEvent);
+    }
+
     private CompletableFuture<SendResult<String, String>> publishPayload(String key, Object payloadObject) {
         try {
             String payload = objectMapper.writeValueAsString(payloadObject);

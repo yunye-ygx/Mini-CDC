@@ -50,9 +50,9 @@ public class SimpleRedisApplyStrategy implements RedisApplyStrategy {
                 values.add("DEL");
                 continue;
             }
-            if ("INSERT".equals(eventType) || "UPDATE".equals(eventType)) {
+            if (isWriteEvent(eventType)) {
                 if (event.after() == null) {
-                    throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE.");
+                    throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE/SNAPSHOT_UPSERT.");
                 }
                 values.add("SET");
                 values.add(toJson(event.after()));
@@ -63,6 +63,12 @@ public class SimpleRedisApplyStrategy implements RedisApplyStrategy {
         values.add("1");
         String result = stringRedisTemplate.execute(APPLY_TRANSACTION_SCRIPT, keys, values.toArray());
         return RedisTransactionApplier.ApplyResult.from(result);
+    }
+
+    private boolean isWriteEvent(String eventType) {
+        return "INSERT".equals(eventType)
+                || "UPDATE".equals(eventType)
+                || "SNAPSHOT_UPSERT".equals(eventType);
     }
 
     private String toJson(Map<String, Object> row) {

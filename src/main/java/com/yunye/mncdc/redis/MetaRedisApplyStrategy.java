@@ -46,8 +46,10 @@ public class MetaRedisApplyStrategy implements RedisApplyStrategy {
             if (row.primaryKey() == null || row.primaryKey().isEmpty()) {
                 throw new IllegalStateException("CDC transaction row must contain primaryKey.");
             }
-            if (!"DELETE".equals(row.eventType()) && row.after() == null) {
-                throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE.");
+            String eventType = row.eventType();
+            boolean delete = "DELETE".equals(eventType);
+            if (!delete && row.after() == null) {
+                throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE/SNAPSHOT_UPSERT.");
             }
 
             String primaryKeySuffix = buildPrimaryKeySuffix(row.primaryKey());
@@ -55,7 +57,7 @@ public class MetaRedisApplyStrategy implements RedisApplyStrategy {
             keys.add(properties.getRedis().getRowMetaPrefix() + transactionEvent.table() + ":" + primaryKeySuffix);
 
             RedisRowMetadata metadata = new RedisRowMetadata(
-                    "DELETE".equals(row.eventType()),
+                    delete,
                     new RedisRowVersion(
                             transactionEvent.binlogFilename(),
                             transactionEvent.nextPosition(),
@@ -64,13 +66,20 @@ public class MetaRedisApplyStrategy implements RedisApplyStrategy {
                     )
             );
 
-            values.add(row.eventType());
-            values.add("DELETE".equals(row.eventType()) ? "" : toJson(row.after()));
+            values.add(resolveRedisEventType(eventType));
+            values.add(delete ? "" : toJson(row.after()));
             values.add(toJson(metadata));
         }
         values.add("1");
         String result = stringRedisTemplate.execute(APPLY_TRANSACTION_SCRIPT, keys, values.toArray());
         return RedisTransactionApplier.ApplyResult.from(result);
+    }
+
+    private String resolveRedisEventType(String eventType) {
+        if ("SNAPSHOT_UPSERT".equals(eventType)) {
+            return "UPDATE";
+        }
+        return eventType;
     }
 
     private String toJson(Object value) {

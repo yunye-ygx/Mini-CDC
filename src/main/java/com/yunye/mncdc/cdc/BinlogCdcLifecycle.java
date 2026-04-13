@@ -17,8 +17,9 @@ import com.yunye.mncdc.model.BinlogCheckpoint;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import com.yunye.mncdc.model.CdcTransactionRow;
 import com.yunye.mncdc.model.TableMetadata;
-import lombok.RequiredArgsConstructor;
+import com.yunye.mncdc.snapshot.SnapshotBootstrapService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
@@ -43,7 +44,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "mini-cdc", name = "enabled", havingValue = "true")
 public class BinlogCdcLifecycle implements SmartLifecycle {
 
@@ -54,6 +54,8 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
     private final CdcEventPublisher cdcEventPublisher;
 
     private final CheckpointStore checkpointStore;
+
+    private final SnapshotBootstrapService snapshotBootstrapService;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -66,6 +68,30 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
     private volatile BinaryLogClient client;
 
     private volatile TableMetadata tableMetadata;
+
+    @Autowired
+    public BinlogCdcLifecycle(
+            MiniCdcProperties properties,
+            TableMetadataService tableMetadataService,
+            CdcEventPublisher cdcEventPublisher,
+            CheckpointStore checkpointStore,
+            SnapshotBootstrapService snapshotBootstrapService
+    ) {
+        this.properties = properties;
+        this.tableMetadataService = tableMetadataService;
+        this.cdcEventPublisher = cdcEventPublisher;
+        this.checkpointStore = checkpointStore;
+        this.snapshotBootstrapService = snapshotBootstrapService;
+    }
+
+    public BinlogCdcLifecycle(
+            MiniCdcProperties properties,
+            TableMetadataService tableMetadataService,
+            CdcEventPublisher cdcEventPublisher,
+            CheckpointStore checkpointStore
+    ) {
+        this(properties, tableMetadataService, cdcEventPublisher, checkpointStore, null);
+    }
 
     @Override
     public void start() {
@@ -113,7 +139,7 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         return true;
     }
 
-    private BinaryLogClient createClient(BinlogCheckpoint startupCheckpoint) {
+    protected BinaryLogClient createClient(BinlogCheckpoint startupCheckpoint) {
         MiniCdcProperties.Mysql mysql = properties.getMysql();
         BinaryLogClient binaryLogClient = new BinaryLogClient(
                 mysql.getHost(),
@@ -271,7 +297,14 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
     }
 
     private BinlogCheckpoint resolveStartupCheckpoint() {
-        if (!properties.getCheckpoint().isEnabled()) {
+        MiniCdcProperties.Checkpoint checkpointProperties = properties.getCheckpoint();
+        MiniCdcProperties.StartupStrategy startupStrategy = checkpointProperties.getStartupStrategy();
+        if (!checkpointProperties.isEnabled()) {
+            if (startupStrategy == MiniCdcProperties.StartupStrategy.SNAPSHOT_THEN_INCREMENTAL) {
+                throw new IllegalStateException(
+                        "Snapshot-then-incremental startup requires checkpoint persistence to be enabled."
+                );
+            }
             log.info("Checkpoint persistence is disabled. Binlog recovery will use BinaryLogClient defaults.");
             return null;
         }
@@ -281,7 +314,7 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
             validateCheckpoint(checkpoint);
             return checkpoint;
         }
-        if (properties.getCheckpoint().getStartupStrategy() == MiniCdcProperties.StartupStrategy.LATEST) {
+        if (startupStrategy == MiniCdcProperties.StartupStrategy.LATEST) {
             BinlogCheckpoint latestCheckpoint = checkpointStore.loadLatestServerCheckpoint();
             log.info(
                     "No stored checkpoint found for connector {}. Starting from latest MySQL position {}:{}.",
@@ -291,7 +324,20 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
             );
             return latestCheckpoint;
         }
-        throw new IllegalStateException("Unsupported startup strategy: " + properties.getCheckpoint().getStartupStrategy());
+        if (startupStrategy == MiniCdcProperties.StartupStrategy.SNAPSHOT_THEN_INCREMENTAL) {
+            if (snapshotBootstrapService == null) {
+                throw new IllegalStateException("Snapshot bootstrap service is required for SNAPSHOT_THEN_INCREMENTAL startup.");
+            }
+            BinlogCheckpoint snapshotCheckpoint = snapshotBootstrapService.bootstrap(tableMetadata);
+            log.info(
+                    "No stored checkpoint found for connector {}. Snapshot bootstrap completed at {}:{}.",
+                    snapshotCheckpoint.connectorName(),
+                    snapshotCheckpoint.binlogFilename(),
+                    snapshotCheckpoint.binlogPosition()
+            );
+            return snapshotCheckpoint;
+        }
+        throw new IllegalStateException("Unsupported startup strategy: " + startupStrategy);
     }
 
     private void validateCheckpoint(BinlogCheckpoint checkpoint) {
