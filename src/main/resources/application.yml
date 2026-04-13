@@ -1,5 +1,5 @@
 server:
-  port: 8088
+  port: 8089
 
 spring:
   application:
@@ -58,7 +58,9 @@ mini-cdc:
   checkpoint:
     enabled: true
     connector-name: ${CDC_CONNECTOR_NAME:mini-user-sync}
-    startup-strategy: ${CDC_STARTUP_STRATEGY:LATEST}
+    startup-strategy: ${CDC_STARTUP_STRATEGY:SNAPSHOT_THEN_INCREMENTAL}
+  snapshot:
+    page-size: ${CDC_SNAPSHOT_PAGE_SIZE:50}
   redis:
     key-prefix: "user:"
     transaction-done-prefix: "mini-cdc:txn:done:"

@@ -21,6 +21,8 @@ public class MiniCdcProperties {
 
     private Checkpoint checkpoint = new Checkpoint();
 
+    private Snapshot snapshot = new Snapshot();
+
     @Data
     public static class Mysql {
 
@@ -83,7 +85,14 @@ public class MiniCdcProperties {
         private StartupStrategy startupStrategy = StartupStrategy.LATEST;
     }
 
+    @Data
+    public static class Snapshot {
+
+        private int pageSize = 500;
+    }
+
     public enum StartupStrategy {
-        LATEST
+        LATEST,
+        SNAPSHOT_THEN_INCREMENTAL
     }
 }
