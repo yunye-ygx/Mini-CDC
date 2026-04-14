@@ -52,9 +52,10 @@ public class MetaRedisApplyStrategy implements RedisApplyStrategy {
                 throw new IllegalStateException("CDC transaction row must contain after for INSERT/UPDATE/SNAPSHOT_UPSERT.");
             }
 
+            String qualifiedTable = buildQualifiedRowIdentity(row);
             String primaryKeySuffix = buildPrimaryKeySuffix(row.primaryKey());
-            keys.add(properties.getRedis().getKeyPrefix() + primaryKeySuffix);
-            keys.add(properties.getRedis().getRowMetaPrefix() + row.table() + ":" + primaryKeySuffix);
+            keys.add(properties.getRedis().getKeyPrefix() + qualifiedTable + ":" + primaryKeySuffix);
+            keys.add(properties.getRedis().getRowMetaPrefix() + qualifiedTable + ":" + primaryKeySuffix);
 
             RedisRowMetadata metadata = new RedisRowMetadata(
                     delete,
@@ -94,5 +95,14 @@ public class MetaRedisApplyStrategy implements RedisApplyStrategy {
         StringJoiner joiner = new StringJoiner(":");
         primaryKey.values().forEach(value -> joiner.add(String.valueOf(value)));
         return joiner.toString();
+    }
+
+    private String buildQualifiedRowIdentity(CdcTransactionRow row) {
+        String table = row.table();
+        String database = row.database();
+        if (database == null || database.isBlank() || table == null || table.isBlank()) {
+            throw new IllegalStateException("CDC transaction row must contain database/table identity.");
+        }
+        return database + "." + table;
     }
 }

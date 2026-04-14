@@ -78,17 +78,24 @@ public class MiniCdcProperties {
     @Data
     public static class Redis {
 
-        private String keyPrefix = "user:";
+        private String keyPrefix = "cdc:";
 
         private String transactionDonePrefix = "mini-cdc:txn:done:";
 
         private String rowMetaPrefix = "mini-cdc:row:meta:";
+
+        private BusinessKeyScope businessKeyScope = BusinessKeyScope.DATABASE_TABLE;
 
         private ApplyMode applyMode = ApplyMode.SIMPLE;
 
         public enum ApplyMode {
             SIMPLE,
             META
+        }
+
+        public enum BusinessKeyScope {
+            TABLE,
+            DATABASE_TABLE
         }
     }
 
