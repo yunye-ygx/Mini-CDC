@@ -13,12 +13,6 @@ public class CheckpointOffsetEntity {
     @TableId(value = "connector_name", type = IdType.INPUT)
     private String connectorName;
 
-    @TableField("database_name")
-    private String databaseName;
-
-    @TableField("table_name")
-    private String tableName;
-
     @TableField("binlog_filename")
     private String binlogFilename;
 

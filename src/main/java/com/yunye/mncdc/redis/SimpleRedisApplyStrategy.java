@@ -44,7 +44,7 @@ public class SimpleRedisApplyStrategy implements RedisApplyStrategy {
             if (event.primaryKey() == null || event.primaryKey().isEmpty()) {
                 throw new IllegalStateException("CDC transaction row must contain primaryKey.");
             }
-            keys.add(buildBusinessKey(event.primaryKey()));
+            keys.add(buildBusinessKey(event));
             String eventType = event.eventType();
             if ("DELETE".equals(eventType)) {
                 values.add("DEL");
@@ -83,8 +83,28 @@ public class SimpleRedisApplyStrategy implements RedisApplyStrategy {
         return properties.getRedis().getTransactionDonePrefix() + transactionId;
     }
 
-    private String buildBusinessKey(Map<String, Object> primaryKey) {
-        return properties.getRedis().getKeyPrefix() + buildPrimaryKeySuffix(primaryKey);
+    private String buildBusinessKey(CdcTransactionRow row) {
+        MiniCdcProperties.Redis.BusinessKeyScope scope = properties.getRedis().getBusinessKeyScope();
+        if (scope == null) {
+            scope = MiniCdcProperties.Redis.BusinessKeyScope.DATABASE_TABLE;
+        }
+        String qualifier = buildScopeQualifier(scope, row);
+        return properties.getRedis().getKeyPrefix() + qualifier + ":" + buildPrimaryKeySuffix(row.primaryKey());
+    }
+
+    private String buildScopeQualifier(MiniCdcProperties.Redis.BusinessKeyScope scope, CdcTransactionRow row) {
+        String table = row.table();
+        String database = row.database();
+        if (scope == MiniCdcProperties.Redis.BusinessKeyScope.TABLE) {
+            if (table == null || table.isBlank()) {
+                throw new IllegalStateException("CDC transaction row must contain database/table identity.");
+            }
+            return table;
+        }
+        if (database == null || database.isBlank() || table == null || table.isBlank()) {
+            throw new IllegalStateException("CDC transaction row must contain database/table identity.");
+        }
+        return database + "." + table;
     }
 
     private String buildPrimaryKeySuffix(Map<String, Object> primaryKey) {

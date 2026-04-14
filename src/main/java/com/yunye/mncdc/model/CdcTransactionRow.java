@@ -3,6 +3,8 @@ package com.yunye.mncdc.model;
 import java.util.Map;
 
 public record CdcTransactionRow(
+        String database,
+        String table,
         int eventIndex,
         String eventType,
         Map<String, Object> primaryKey,

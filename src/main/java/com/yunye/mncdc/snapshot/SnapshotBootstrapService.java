@@ -40,14 +40,11 @@ public class SnapshotBootstrapService {
     private final MiniCdcProperties properties;
 
     public BinlogCheckpoint bootstrap(TableMetadata tableMetadata) {
-        BinlogCheckpoint cutoverCheckpoint = normalizeCutoverCheckpoint(
-                checkpointStore.loadLatestServerCheckpoint(),
-                tableMetadata
-        );
+        BinlogCheckpoint cutoverCheckpoint = checkpointStore.loadLatestServerCheckpoint();
         fullSyncTaskStore.start(new FullSyncTask(
                 cutoverCheckpoint.connectorName(),
-                cutoverCheckpoint.databaseName(),
-                cutoverCheckpoint.tableName(),
+                tableMetadata.database(),
+                tableMetadata.table(),
                 FullSyncTaskStatus.RUNNING,
                 cutoverCheckpoint.binlogFilename(),
                 cutoverCheckpoint.binlogPosition(),
@@ -68,16 +65,6 @@ public class SnapshotBootstrapService {
             fullSyncTaskStore.markFailed(cutoverCheckpoint.connectorName(), failureMessage(exception));
             throw exception;
         }
-    }
-
-    private BinlogCheckpoint normalizeCutoverCheckpoint(BinlogCheckpoint rawCheckpoint, TableMetadata tableMetadata) {
-        return new BinlogCheckpoint(
-                rawCheckpoint.connectorName(),
-                tableMetadata.database(),
-                tableMetadata.table(),
-                rawCheckpoint.binlogFilename(),
-                rawCheckpoint.binlogPosition()
-        );
     }
 
     protected void publishSnapshotPages(
@@ -138,6 +125,8 @@ public class SnapshotBootstrapService {
         for (int i = 0; i < rows.size(); i++) {
             Map<String, Object> row = rows.get(i);
             eventRows.add(new CdcTransactionRow(
+                    tableMetadata.database(),
+                    tableMetadata.table(),
                     i,
                     "SNAPSHOT_UPSERT",
                     extractPrimaryKey(row, tableMetadata),
@@ -148,8 +137,6 @@ public class SnapshotBootstrapService {
         return new CdcTransactionEvent(
                 buildTransactionId(cutoverCheckpoint, pageIndex),
                 cutoverCheckpoint.connectorName(),
-                tableMetadata.database(),
-                tableMetadata.table(),
                 cutoverCheckpoint.binlogFilename(),
                 pageIndex,
                 cutoverCheckpoint.binlogPosition(),

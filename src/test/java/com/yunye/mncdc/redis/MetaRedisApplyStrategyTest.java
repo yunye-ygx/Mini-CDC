@@ -79,6 +79,30 @@ class MetaRedisApplyStrategyTest {
     }
 
     @Test
+    void buildsMetadataKeysUsingRowTableIdentity() {
+        when(stringRedisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn("APPLIED");
+
+        strategy.apply(genericWriteTransaction(
+                "mini-order-sync:mysql-bin.000010:88:125",
+                "mysql-bin.000010",
+                125L,
+                0,
+                "INSERT",
+                "order_item",
+                Map.of("id", 1L, "sku", "A-1")
+        ));
+
+        ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
+        verify(stringRedisTemplate).execute(any(RedisScript.class), keysCaptor.capture(), any(Object[].class));
+
+        assertThat(keysCaptor.getValue()).containsExactly(
+                "mini-cdc:txn:done:mini-order-sync:mysql-bin.000010:88:125",
+                "user:1",
+                "mini-cdc:row:meta:order_item:1"
+        );
+    }
+
+    @Test
     void buildsDeleteTombstoneMetadata() {
         when(stringRedisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn("APPLIED");
 
@@ -96,6 +120,36 @@ class MetaRedisApplyStrategyTest {
         assertThat(argsCaptor.getValue()[1]).isEqualTo("");
         assertThat((String) argsCaptor.getValue()[2]).contains("\"deleted\":true");
         assertThat((String) argsCaptor.getValue()[2]).contains("\"eventIndex\":1");
+    }
+
+    @Test
+    void buildsNonDeleteMetadataAndPayloadForSnapshotUpsertRows() {
+        when(stringRedisTemplate.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn("APPLIED");
+
+        RedisTransactionApplier.ApplyResult result = strategy.apply(snapshotTransaction(
+                "mini-user-sync:snapshot:2",
+                "mysql-bin.000020",
+                210L,
+                2,
+                Map.of("id", 2L, "username", "bruce")
+        ));
+
+        assertThat(result).isEqualTo(RedisTransactionApplier.ApplyResult.APPLIED);
+
+        ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Object[]> argsCaptor = ArgumentCaptor.forClass(Object[].class);
+        verify(stringRedisTemplate).execute(any(RedisScript.class), keysCaptor.capture(), argsCaptor.capture());
+
+        assertThat(keysCaptor.getValue()).containsExactly(
+                "mini-cdc:txn:done:mini-user-sync:snapshot:2",
+                "user:2",
+                "mini-cdc:row:meta:user:2"
+        );
+        assertThat(argsCaptor.getValue()[0]).isEqualTo("UPDATE");
+        assertThat((String) argsCaptor.getValue()[1]).contains("\"username\":\"bruce\"");
+        assertThat((String) argsCaptor.getValue()[2]).contains("\"deleted\":false");
+        assertThat((String) argsCaptor.getValue()[2]).contains("\"binlogFilename\":\"mysql-bin.000020\"");
+        assertThat((String) argsCaptor.getValue()[2]).contains("\"eventIndex\":2");
     }
 
     @Test
@@ -118,18 +172,30 @@ class MetaRedisApplyStrategyTest {
             int eventIndex,
             Map<String, Object> after
     ) {
+        return genericWriteTransaction(transactionId, binlogFilename, nextPosition, eventIndex, "INSERT", "user", after);
+    }
+
+    private CdcTransactionEvent genericWriteTransaction(
+            String transactionId,
+            String binlogFilename,
+            long nextPosition,
+            int eventIndex,
+            String eventType,
+            String table,
+            Map<String, Object> after
+    ) {
         return new CdcTransactionEvent(
                 transactionId,
                 "mini-user-sync",
-                "mini",
-                "user",
                 binlogFilename,
                 88L,
                 nextPosition,
                 1L,
                 List.of(new CdcTransactionRow(
+                        "mini",
+                        table,
                         eventIndex,
-                        "INSERT",
+                        eventType,
                         Map.of("id", after.get("id")),
                         null,
                         after
@@ -147,19 +213,37 @@ class MetaRedisApplyStrategyTest {
         return new CdcTransactionEvent(
                 transactionId,
                 "mini-user-sync",
-                "mini",
-                "user",
                 binlogFilename,
                 88L,
                 nextPosition,
                 1L,
                 List.of(new CdcTransactionRow(
+                        "mini",
+                        "user",
                         eventIndex,
                         "DELETE",
                         Map.of("id", before.get("id")),
                         before,
                         null
                 ))
+        );
+    }
+
+    private CdcTransactionEvent snapshotTransaction(
+            String transactionId,
+            String binlogFilename,
+            long nextPosition,
+            int eventIndex,
+            Map<String, Object> after
+    ) {
+        return genericWriteTransaction(
+                transactionId,
+                binlogFilename,
+                nextPosition,
+                eventIndex,
+                "SNAPSHOT_UPSERT",
+                "user",
+                after
         );
     }
 }

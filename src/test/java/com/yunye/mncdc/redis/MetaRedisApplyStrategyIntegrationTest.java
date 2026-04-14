@@ -130,15 +130,13 @@ class MetaRedisApplyStrategyIntegrationTest {
         strategy.apply(new CdcTransactionEvent(
                 "txn-repeat",
                 "mini-user-sync",
-                "mini",
-                "user",
                 "mysql-bin.000010",
                 88L,
                 125L,
                 1L,
                 List.of(
-                        new CdcTransactionRow(0, "INSERT", Map.of("id", 1L), null, Map.of("id", 1L, "username", "alice")),
-                        new CdcTransactionRow(1, "UPDATE", Map.of("id", 1L), Map.of("id", 1L, "username", "alice"), Map.of("id", 1L, "username", "alicia"))
+                        new CdcTransactionRow("mini", "user", 0, "INSERT", Map.of("id", 1L), null, Map.of("id", 1L, "username", "alice")),
+                        new CdcTransactionRow("mini", "user", 1, "UPDATE", Map.of("id", 1L), Map.of("id", 1L, "username", "alice"), Map.of("id", 1L, "username", "alicia"))
                 )
         ));
 
@@ -174,13 +172,13 @@ class MetaRedisApplyStrategyIntegrationTest {
         return new CdcTransactionEvent(
                 transactionId,
                 "mini-user-sync",
-                "mini",
-                "user",
                 binlogFilename,
                 88L,
                 nextPosition,
                 1L,
                 List.of(new CdcTransactionRow(
+                        "mini",
+                        "user",
                         eventIndex,
                         "INSERT",
                         Map.of("id", after.get("id")),
@@ -201,13 +199,13 @@ class MetaRedisApplyStrategyIntegrationTest {
         return new CdcTransactionEvent(
                 transactionId,
                 "mini-user-sync",
-                "mini",
-                "user",
                 binlogFilename,
                 88L,
                 nextPosition,
                 1L,
                 List.of(new CdcTransactionRow(
+                        "mini",
+                        "user",
                         eventIndex,
                         "UPDATE",
                         Map.of("id", after.get("id")),
@@ -227,13 +225,13 @@ class MetaRedisApplyStrategyIntegrationTest {
         return new CdcTransactionEvent(
                 transactionId,
                 "mini-user-sync",
-                "mini",
-                "user",
                 binlogFilename,
                 88L,
                 nextPosition,
                 1L,
                 List.of(new CdcTransactionRow(
+                        "mini",
+                        "user",
                         eventIndex,
                         "DELETE",
                         Map.of("id", before.get("id")),

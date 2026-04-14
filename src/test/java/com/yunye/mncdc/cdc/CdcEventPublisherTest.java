@@ -45,7 +45,7 @@ class CdcEventPublisherTest {
     }
 
     @Test
-    void serializesEventIndexInPublishedPayload() throws Exception {
+    void serializesRowLevelTableIdentityInPublishedPayload() throws Exception {
         when(properties.getKafka()).thenReturn(kafkaProperties);
         when(kafkaProperties.getTopic()).thenReturn("user-change-topic");
         when(properties.isLogEventJson()).thenReturn(false);
@@ -55,13 +55,13 @@ class CdcEventPublisherTest {
         publisher.publishTransaction(new CdcTransactionEvent(
                 "txn-1",
                 "mini-user-sync",
-                "mini",
-                "user",
                 "mysql-bin.000010",
                 88L,
                 125L,
                 1L,
                 List.of(new CdcTransactionRow(
+                        "mini",
+                        "user",
                         1,
                         "UPDATE",
                         Map.of("id", 1L),
@@ -73,9 +73,15 @@ class CdcEventPublisherTest {
         ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
         verify(kafkaTemplate).send(eq("user-change-topic"), eq("txn-1"), payloadCaptor.capture());
         JsonNode jsonPayload = objectMapper.readTree(payloadCaptor.getValue());
+        assertThat(jsonPayload.has("database")).isFalse();
+        assertThat(jsonPayload.has("table")).isFalse();
         assertThat(jsonPayload.path("events").get(0).path("eventIndex").asInt()).isEqualTo(1);
+        assertThat(jsonPayload.path("events").get(0).path("database").asText()).isEqualTo("mini");
+        assertThat(jsonPayload.path("events").get(0).path("table").asText()).isEqualTo("user");
 
         CdcTransactionEvent roundTrip = objectMapper.readValue(payloadCaptor.getValue(), CdcTransactionEvent.class);
         assertThat(roundTrip.events().get(0).eventIndex()).isEqualTo(1);
+        assertThat(roundTrip.events().get(0).database()).isEqualTo("mini");
+        assertThat(roundTrip.events().get(0).table()).isEqualTo("user");
     }
 }

@@ -24,16 +24,13 @@ public class CheckpointStore {
         String connectorName = getConnectorName();
         try {
             CheckpointOffsetEntity entity = checkpointMapper.selectById(connectorName);
-            if (entity == null) {
-                return Optional.empty();
-            }
-            if (!StringUtils.hasText(entity.getBinlogFilename()) || entity.getBinlogPosition() == null) {
+            if (entity == null
+                    || !StringUtils.hasText(entity.getBinlogFilename())
+                    || entity.getBinlogPosition() == null) {
                 return Optional.empty();
             }
             return Optional.of(new BinlogCheckpoint(
                     entity.getConnectorName(),
-                    entity.getDatabaseName(),
-                    entity.getTableName(),
                     entity.getBinlogFilename(),
                     entity.getBinlogPosition()
             ));
@@ -52,14 +49,12 @@ public class CheckpointStore {
 
     public BinlogCheckpoint loadLatestServerCheckpoint() {
         try {
-            MasterStatusRecord masterStatus = checkpointMapper.selectMasterStatus();
+            MasterStatusRecord masterStatus = checkpointMapper.selectMasterStatus(); // 获得当前主库的binlog文件名和位置
             if (masterStatus == null) {
                 throw new IllegalStateException("SHOW MASTER STATUS returned no rows.");
             }
             return new BinlogCheckpoint(
                     getConnectorName(),
-                    properties.getMysql().getDatabase(),
-                    properties.getMysql().getTable(),
                     masterStatus.file(),
                     masterStatus.position()
             );
@@ -79,8 +74,6 @@ public class CheckpointStore {
     private CheckpointOffsetEntity toEntity(BinlogCheckpoint checkpoint) {
         CheckpointOffsetEntity entity = new CheckpointOffsetEntity();
         entity.setConnectorName(checkpoint.connectorName());
-        entity.setDatabaseName(checkpoint.databaseName());
-        entity.setTableName(checkpoint.tableName());
         entity.setBinlogFilename(checkpoint.binlogFilename());
         entity.setBinlogPosition(checkpoint.binlogPosition());
         return entity;
