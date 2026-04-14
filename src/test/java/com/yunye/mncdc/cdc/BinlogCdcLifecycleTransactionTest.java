@@ -15,6 +15,7 @@ import com.yunye.mncdc.metadata.TableMetadataService;
 import com.yunye.mncdc.model.BinlogCheckpoint;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import com.yunye.mncdc.model.CdcTransactionRow;
+import com.yunye.mncdc.model.QualifiedTable;
 import com.yunye.mncdc.model.TableMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,14 +30,17 @@ import java.lang.reflect.Method;
 import java.util.AbstractMap;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -47,6 +51,9 @@ class BinlogCdcLifecycleTransactionTest {
 
     @Mock
     private MiniCdcProperties.Checkpoint checkpointProperties;
+
+    @Mock
+    private MiniCdcProperties.Mysql mysqlProperties;
 
     @Mock
     private TableMetadataService tableMetadataService;
@@ -65,8 +72,10 @@ class BinlogCdcLifecycleTransactionTest {
     @BeforeEach
     void setUp() throws Exception {
         lenient().when(properties.getCheckpoint()).thenReturn(checkpointProperties);
+        lenient().when(properties.getMysql()).thenReturn(mysqlProperties);
         lenient().when(checkpointProperties.getConnectorName()).thenReturn("mini-user-sync");
         lenient().when(checkpointProperties.isEnabled()).thenReturn(true);
+        lenient().when(mysqlProperties.resolvedTables()).thenReturn(List.of(new QualifiedTable("mini", "user")));
         lenient().when(binaryLogClient.getBinlogFilename()).thenReturn("mysql-bin.000001");
 
         lifecycle = new BinlogCdcLifecycle(properties, tableMetadataService, publisher, checkpointStore);
@@ -79,6 +88,25 @@ class BinlogCdcLifecycleTransactionTest {
         ));
         AtomicBoolean running = (AtomicBoolean) getField("running");
         running.set(true);
+    }
+
+    @Test
+    void startRejectsMultiTableConfigurationForCurrentSingleTableLifecycle() {
+        QualifiedTable first = new QualifiedTable("mini", "user");
+        QualifiedTable second = new QualifiedTable("mini", "order");
+        when(mysqlProperties.resolvedTables()).thenReturn(List.of(first, second));
+        when(tableMetadataService.getConfiguredTableMetadata()).thenReturn(Map.of(
+                first, new TableMetadata("mini", "user", List.of("id"), List.of("id")),
+                second, new TableMetadata("mini", "order", List.of("id"), List.of("id"))
+        ));
+
+        BinlogCdcLifecycle startLifecycle = new BinlogCdcLifecycle(properties, tableMetadataService, publisher, checkpointStore);
+
+        assertThatThrownBy(startLifecycle::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Current lifecycle path supports only one configured table.");
+        assertThat(startLifecycle.isRunning()).isFalse();
+        verifyNoInteractions(checkpointStore, publisher);
     }
 
     @Test

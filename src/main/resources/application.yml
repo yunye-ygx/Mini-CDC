@@ -46,9 +46,10 @@ mini-cdc:
     port: ${CDC_MYSQL_PORT:3306}
     username: ${CDC_MYSQL_USERNAME:root}
     password: ${CDC_MYSQL_PASSWORD:1234}
-    database: ${CDC_MYSQL_DATABASE:mini}
-    table: ${CDC_MYSQL_TABLE:user}
     jdbc-url: ${CDC_MYSQL_JDBC_URL:jdbc:mysql://127.0.0.1:3306/mini?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    tables:
+      - database: ${CDC_MYSQL_DATABASE:mini}
+        table: ${CDC_MYSQL_TABLE:user}
 
   kafka:
     topic: user-change-topic

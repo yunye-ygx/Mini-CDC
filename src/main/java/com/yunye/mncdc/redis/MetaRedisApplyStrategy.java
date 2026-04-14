@@ -54,7 +54,7 @@ public class MetaRedisApplyStrategy implements RedisApplyStrategy {
 
             String primaryKeySuffix = buildPrimaryKeySuffix(row.primaryKey());
             keys.add(properties.getRedis().getKeyPrefix() + primaryKeySuffix);
-            keys.add(properties.getRedis().getRowMetaPrefix() + transactionEvent.table() + ":" + primaryKeySuffix);
+            keys.add(properties.getRedis().getRowMetaPrefix() + row.table() + ":" + primaryKeySuffix);
 
             RedisRowMetadata metadata = new RedisRowMetadata(
                     delete,

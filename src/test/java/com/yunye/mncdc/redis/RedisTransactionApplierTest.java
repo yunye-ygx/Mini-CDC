@@ -54,13 +54,13 @@ class RedisTransactionApplierTest {
         return new CdcTransactionEvent(
                 "mini-user-sync:mysql-bin.000001:345:240",
                 "mini-user-sync",
-                "mini",
-                "user",
                 "mysql-bin.000001",
                 345L,
                 240L,
                 1L,
                 List.of(new CdcTransactionRow(
+                        "mini",
+                        "user",
                         0,
                         "INSERT",
                         Map.of("id", 1L),

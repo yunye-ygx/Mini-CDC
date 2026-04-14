@@ -1,9 +1,12 @@
 package com.yunye.mncdc.config;
 
+import com.yunye.mncdc.model.QualifiedTable;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @ConfigurationProperties(prefix = "mini-cdc")
@@ -34,13 +37,27 @@ public class MiniCdcProperties {
 
         private String password;
 
-        private String database;
-
-        private String table;
-
         private long serverId = 5401L;
 
         private String jdbcUrl;
+
+        private List<QualifiedTable> tables = new ArrayList<>();
+
+        public List<QualifiedTable> resolvedTables() {
+            if (!tables.isEmpty()) {
+                return List.copyOf(tables);
+            }
+            if (database != null && table != null) {
+                return List.of(new QualifiedTable(database, table));
+            }
+            return List.of();
+        }
+
+        @Deprecated
+        private String database;
+
+        @Deprecated
+        private String table;
     }
 
     @Data
