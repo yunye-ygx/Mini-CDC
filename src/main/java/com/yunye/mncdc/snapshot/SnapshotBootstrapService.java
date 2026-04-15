@@ -40,30 +40,67 @@ public class SnapshotBootstrapService {
     private final MiniCdcProperties properties;
 
     public BinlogCheckpoint bootstrap(TableMetadata tableMetadata) {
-        BinlogCheckpoint cutoverCheckpoint = checkpointStore.loadLatestServerCheckpoint();
-        fullSyncTaskStore.start(new FullSyncTask(
-                cutoverCheckpoint.connectorName(),
-                tableMetadata.database(),
-                tableMetadata.table(),
-                FullSyncTaskStatus.RUNNING,
-                cutoverCheckpoint.binlogFilename(),
-                cutoverCheckpoint.binlogPosition(),
-                null,
-                null,
-                null
-        ));
+        return bootstrap(List.of(tableMetadata));
+    }
 
+    public BinlogCheckpoint bootstrap(List<TableMetadata> orderedTables) {
+        if (orderedTables == null || orderedTables.isEmpty()) {
+            throw new IllegalStateException("At least one configured table is required for snapshot bootstrap.");
+        }
+        BinlogCheckpoint cutoverCheckpoint = checkpointStore.loadLatestServerCheckpoint();
+        initializeTasks(orderedTables, cutoverCheckpoint);
+        TableMetadata lastTable = null;
+        for (TableMetadata tableMetadata : orderedTables) {
+            lastTable = tableMetadata;
+            try {
+                snapshotReader.readConsistentSnapshot(connection -> {
+                    publishSnapshotPages(connection, tableMetadata, cutoverCheckpoint);
+                    return cutoverCheckpoint;
+                });
+                fullSyncTaskStore.markCompleted(
+                        cutoverCheckpoint.connectorName(),
+                        tableMetadata.database(),
+                        tableMetadata.table()
+                );
+            } catch (RuntimeException exception) {
+                fullSyncTaskStore.markFailed(
+                        cutoverCheckpoint.connectorName(),
+                        tableMetadata.database(),
+                        tableMetadata.table(),
+                        failureMessage(exception)
+                );
+                throw exception;
+            }
+        }
         try {
-            snapshotReader.readConsistentSnapshot(connection -> {
-                publishSnapshotPages(connection, tableMetadata, cutoverCheckpoint);
-                return cutoverCheckpoint;
-            });
-            fullSyncTaskStore.markCompleted(cutoverCheckpoint.connectorName());
             checkpointStore.save(cutoverCheckpoint);
-            return cutoverCheckpoint;
         } catch (RuntimeException exception) {
-            fullSyncTaskStore.markFailed(cutoverCheckpoint.connectorName(), failureMessage(exception));
+            if (lastTable != null) {
+                fullSyncTaskStore.markFailed(
+                        cutoverCheckpoint.connectorName(),
+                        lastTable.database(),
+                        lastTable.table(),
+                        failureMessage(exception)
+                );
+            }
             throw exception;
+        }
+        return cutoverCheckpoint;
+    }
+
+    private void initializeTasks(List<TableMetadata> orderedTables, BinlogCheckpoint cutoverCheckpoint) {
+        for (TableMetadata tableMetadata : orderedTables) {
+            fullSyncTaskStore.start(new FullSyncTask(
+                    cutoverCheckpoint.connectorName(),
+                    tableMetadata.database(),
+                    tableMetadata.table(),
+                    FullSyncTaskStatus.RUNNING,
+                    cutoverCheckpoint.binlogFilename(),
+                    cutoverCheckpoint.binlogPosition(),
+                    null,
+                    null,
+                    null
+            ));
         }
     }
 
@@ -84,6 +121,8 @@ public class SnapshotBootstrapService {
             publishSnapshotPage(snapshotEvent);
             fullSyncTaskStore.updateLastSentPk(
                     cutoverCheckpoint.connectorName(),
+                    tableMetadata.database(),
+                    tableMetadata.table(),
                     serializePrimaryKey(orderedPrimaryKey(tableMetadata, page.lastPrimaryKey()))
             );
 
@@ -135,7 +174,7 @@ public class SnapshotBootstrapService {
             ));
         }
         return new CdcTransactionEvent(
-                buildTransactionId(cutoverCheckpoint, pageIndex),
+                buildTransactionId(tableMetadata, cutoverCheckpoint, pageIndex),
                 cutoverCheckpoint.connectorName(),
                 cutoverCheckpoint.binlogFilename(),
                 pageIndex,
@@ -145,9 +184,13 @@ public class SnapshotBootstrapService {
         );
     }
 
-    protected String buildTransactionId(BinlogCheckpoint cutoverCheckpoint, int pageIndex) {
+    protected String buildTransactionId(TableMetadata tableMetadata, BinlogCheckpoint cutoverCheckpoint, int pageIndex) {
         return "snapshot:"
                 + cutoverCheckpoint.connectorName()
+                + ":"
+                + tableMetadata.database()
+                + "."
+                + tableMetadata.table()
                 + ":"
                 + cutoverCheckpoint.binlogFilename()
                 + ":"

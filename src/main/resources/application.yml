@@ -49,9 +49,9 @@ mini-cdc:
     jdbc-url: ${CDC_MYSQL_JDBC_URL:jdbc:mysql://127.0.0.1:3306/mini?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
     tables:
       - database: ${CDC_MYSQL_DATABASE:mini}
-        table: ${CDC_MYSQL_TABLE:user}
+        table: ${CDC_MYSQL_TABLE_USER:user}
       - database: ${CDC_MYSQL_DATABASE:mini}
-        table: ${CDC_MYSQL_TABLE:order}
+        table: ${CDC_MYSQL_TABLE_ORDER:order}
 
 
   kafka:
