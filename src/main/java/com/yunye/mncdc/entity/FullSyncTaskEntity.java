@@ -1,8 +1,6 @@
 package com.yunye.mncdc.entity;
 
-import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
-import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -12,7 +10,7 @@ import java.time.LocalDateTime;
 @TableName("full_sync_task")
 public class FullSyncTaskEntity {
 
-    @TableId(value = "connector_name", type = IdType.INPUT)
+    @TableField("connector_name")
     private String connectorName;
 
     @TableField("database_name")

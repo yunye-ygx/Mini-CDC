@@ -389,7 +389,7 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
             if (snapshotBootstrapService == null) {
                 throw new IllegalStateException("Snapshot bootstrap service is required for SNAPSHOT_THEN_INCREMENTAL startup.");
             }
-            BinlogCheckpoint snapshotCheckpoint = snapshotBootstrapService.bootstrap(resolveSnapshotBootstrapTable());
+            BinlogCheckpoint snapshotCheckpoint = snapshotBootstrapService.bootstrap(resolveSnapshotBootstrapTables());
             log.info(
                     "No stored checkpoint found for connector {}. Snapshot bootstrap completed at {}:{}.",
                     snapshotCheckpoint.connectorName(),
@@ -401,12 +401,12 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         throw new IllegalStateException("Unsupported startup strategy: " + startupStrategy);
     }
 
-    private TableMetadata resolveSnapshotBootstrapTable() {
-        Set<QualifiedTable> listenedTables = configuredTables;
-        if (listenedTables == null || listenedTables.size() != 1) {
-            throw new IllegalStateException("Snapshot bootstrap currently supports exactly one configured table.");
+    private List<TableMetadata> resolveSnapshotBootstrapTables() {
+        Map<QualifiedTable, TableMetadata> metadataByTable = tableMetadataByTable;
+        if (metadataByTable == null || metadataByTable.isEmpty()) {
+            throw new IllegalStateException("CDC lifecycle metadata has not been initialized.");
         }
-        return requireMetadata(listenedTables.iterator().next());
+        return List.copyOf(metadataByTable.values());
     }
 
     private BinlogCheckpoint checkpointFor(EventHeaderV4 header) {

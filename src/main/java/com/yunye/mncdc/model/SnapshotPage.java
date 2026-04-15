@@ -1,5 +1,7 @@
 package com.yunye.mncdc.model;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -10,8 +12,12 @@ public record SnapshotPage(
 ) {
     public SnapshotPage {
         rows = List.copyOf(rows.stream()
-                .map(Map::copyOf)
+                .map(SnapshotPage::copyRow)
                 .toList());
         lastPrimaryKey = Map.copyOf(lastPrimaryKey);
+    }
+
+    private static Map<String, Object> copyRow(Map<String, Object> row) {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(row));
     }
 }

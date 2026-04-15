@@ -19,30 +19,46 @@ public class FullSyncTaskStore {
     public void start(FullSyncTask task) {
         try {
             fullSyncTaskMapper.insertOrUpdate(toEntity(task));
+            assertTaskPersisted(task.connectorName(), task.databaseName(), task.tableName());
         } catch (PersistenceException | DataAccessException exception) {
             throw new IllegalStateException("Failed to persist full sync task.", exception);
         }
     }
 
-    public void markCompleted(String connectorName) {
+    public void markCompleted(String connectorName, String databaseName, String tableName) {
         try {
-            assertTaskUpdated(connectorName, fullSyncTaskMapper.markCompleted(connectorName));
+            assertTaskUpdated(
+                    connectorName,
+                    databaseName,
+                    tableName,
+                    fullSyncTaskMapper.markCompleted(connectorName, databaseName, tableName)
+            );
         } catch (PersistenceException | DataAccessException exception) {
             throw new IllegalStateException("Failed to persist full sync task.", exception);
         }
     }
 
-    public void updateLastSentPk(String connectorName, String lastSentPk) {
+    public void updateLastSentPk(String connectorName, String databaseName, String tableName, String lastSentPk) {
         try {
-            assertTaskUpdated(connectorName, fullSyncTaskMapper.updateLastSentPk(connectorName, lastSentPk));
+            assertTaskUpdated(
+                    connectorName,
+                    databaseName,
+                    tableName,
+                    fullSyncTaskMapper.updateLastSentPk(connectorName, databaseName, tableName, lastSentPk)
+            );
         } catch (PersistenceException | DataAccessException exception) {
             throw new IllegalStateException("Failed to persist full sync task.", exception);
         }
     }
 
-    public void markFailed(String connectorName, String lastError) {
+    public void markFailed(String connectorName, String databaseName, String tableName, String lastError) {
         try {
-            assertTaskUpdated(connectorName, fullSyncTaskMapper.markFailed(connectorName, lastError));
+            assertTaskUpdated(
+                    connectorName,
+                    databaseName,
+                    tableName,
+                    fullSyncTaskMapper.markFailed(connectorName, databaseName, tableName, lastError)
+            );
         } catch (PersistenceException | DataAccessException exception) {
             throw new IllegalStateException("Failed to persist full sync task.", exception);
         }
@@ -63,9 +79,32 @@ public class FullSyncTaskStore {
         return entity;
     }
 
-    private void assertTaskUpdated(String connectorName, int updatedRows) {
+    private void assertTaskUpdated(String connectorName, String databaseName, String tableName, int updatedRows) {
         if (updatedRows == 0) {
-            throw new IllegalStateException("Full sync task row was not found for connector: " + connectorName);
+            throw new IllegalStateException(
+                    "Full sync task row was not found for connector: "
+                            + connectorName
+                            + ", database: "
+                            + databaseName
+                            + ", table: "
+                            + tableName
+            );
+        }
+    }
+
+    private void assertTaskPersisted(String connectorName, String databaseName, String tableName) {
+        if (fullSyncTaskMapper.countByTaskKey(connectorName, databaseName, tableName) == 0) {
+            throw new IllegalStateException(
+                    "Full sync task row could not be persisted for connector: "
+                            + connectorName
+                            + ", database: "
+                            + databaseName
+                            + ", table: "
+                            + tableName
+                            + ". Expected full_sync_task to support one row per "
+                            + "(connector_name, database_name, table_name). "
+                            + "Apply the migration in src/main/sql/full-updat.sql and retry."
+            );
         }
     }
 }
