@@ -26,6 +26,8 @@ public class MiniCdcProperties {
 
     private Snapshot snapshot = new Snapshot();
 
+    private Ddl ddl = new Ddl();
+
     @Data
     public static class Mysql {
 
@@ -113,6 +115,18 @@ public class MiniCdcProperties {
     public static class Snapshot {
 
         private int pageSize = 500;
+    }
+
+    @Data
+    public static class Ddl {
+
+        private String stagingKeyPrefix = "cdc:staging:";
+
+        private Duration rebuildPollInterval = Duration.ofSeconds(5);
+
+        private int maxRetries = 3;
+
+        private Duration runningTimeout = Duration.ofMinutes(5);
     }
 
     public enum StartupStrategy {

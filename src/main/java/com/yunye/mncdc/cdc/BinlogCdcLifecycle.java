@@ -5,15 +5,18 @@ import com.github.shyiko.mysql.binlog.event.Event;
 import com.github.shyiko.mysql.binlog.event.EventData;
 import com.github.shyiko.mysql.binlog.event.EventHeaderV4;
 import com.github.shyiko.mysql.binlog.event.EventType;
-import com.github.shyiko.mysql.binlog.event.TableMapEventData;
 import com.github.shyiko.mysql.binlog.event.DeleteRowsEventData;
+import com.github.shyiko.mysql.binlog.event.QueryEventData;
+import com.github.shyiko.mysql.binlog.event.TableMapEventData;
 import com.github.shyiko.mysql.binlog.event.UpdateRowsEventData;
 import com.github.shyiko.mysql.binlog.event.WriteRowsEventData;
 import com.github.shyiko.mysql.binlog.event.XidEventData;
 import com.yunye.mncdc.checkpoint.CheckpointStore;
 import com.yunye.mncdc.config.MiniCdcProperties;
+import com.yunye.mncdc.ddl.SchemaChangeClassifier;
 import com.yunye.mncdc.metadata.TableMetadataService;
 import com.yunye.mncdc.model.BinlogCheckpoint;
+import com.yunye.mncdc.model.CdcSchemaChangeEvent;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import com.yunye.mncdc.model.CdcTransactionRow;
 import com.yunye.mncdc.model.QualifiedTable;
@@ -28,6 +31,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.Serializable;
 import java.sql.Timestamp;
+import java.util.Locale;
 import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -43,6 +47,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Component
@@ -50,6 +56,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class BinlogCdcLifecycle implements SmartLifecycle {
 
     private static final Set<String> INTERNAL_PROGRESS_TABLES = Set.of("cdc_offset", "full_sync_task");
+    private static final Pattern ALTER_TABLE_PATTERN = Pattern.compile(
+            "(?i)^\\s*ALTER\\s+TABLE\\s+((?:`[^`]+`|[\\w]+)(?:\\.(?:`[^`]+`|[\\w]+))?)"
+    );
 
     private final MiniCdcProperties properties;
 
@@ -60,6 +69,8 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
     private final CheckpointStore checkpointStore;
 
     private final SnapshotBootstrapService snapshotBootstrapService;
+
+    private final SchemaChangeClassifier schemaChangeClassifier;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -83,13 +94,15 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
             TableMetadataService tableMetadataService,
             CdcEventPublisher cdcEventPublisher,
             CheckpointStore checkpointStore,
-            SnapshotBootstrapService snapshotBootstrapService
+            SnapshotBootstrapService snapshotBootstrapService,
+            SchemaChangeClassifier schemaChangeClassifier
     ) {
         this.properties = properties;
         this.tableMetadataService = tableMetadataService;
         this.cdcEventPublisher = cdcEventPublisher;
         this.checkpointStore = checkpointStore;
         this.snapshotBootstrapService = snapshotBootstrapService;
+        this.schemaChangeClassifier = schemaChangeClassifier;
     }
 
     public BinlogCdcLifecycle(
@@ -98,7 +111,31 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
             CdcEventPublisher cdcEventPublisher,
             CheckpointStore checkpointStore
     ) {
-        this(properties, tableMetadataService, cdcEventPublisher, checkpointStore, null);
+        this(
+                properties,
+                tableMetadataService,
+                cdcEventPublisher,
+                checkpointStore,
+                null,
+                new SchemaChangeClassifier()
+        );
+    }
+
+    public BinlogCdcLifecycle(
+            MiniCdcProperties properties,
+            TableMetadataService tableMetadataService,
+            CdcEventPublisher cdcEventPublisher,
+            CheckpointStore checkpointStore,
+            SnapshotBootstrapService snapshotBootstrapService
+    ) {
+        this(
+                properties,
+                tableMetadataService,
+                cdcEventPublisher,
+                checkpointStore,
+                snapshotBootstrapService,
+                new SchemaChangeClassifier()
+        );
     }
 
     @Override
@@ -201,7 +238,9 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
             return;
         }
         try {
-            if (eventType == EventType.EXT_WRITE_ROWS || eventType == EventType.WRITE_ROWS) {
+            if (eventType == EventType.QUERY && eventData instanceof QueryEventData queryEventData) {
+                handleQueryEvent(queryEventData, checkpointFor(header), header.getTimestamp());
+            } else if (eventType == EventType.EXT_WRITE_ROWS || eventType == EventType.WRITE_ROWS) {
                 handleInsert((WriteRowsEventData) eventData);
             } else if (eventType == EventType.EXT_UPDATE_ROWS || eventType == EventType.UPDATE_ROWS) {
                 handleUpdate((UpdateRowsEventData) eventData);
@@ -333,6 +372,21 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
         clearTransactionState();
     }
 
+    private void handleQueryEvent(QueryEventData queryEventData, BinlogCheckpoint checkpoint, long eventTimestamp)
+            throws ExecutionException, InterruptedException {
+        QualifiedTable table = resolveConfiguredTable(queryEventData.getDatabase(), queryEventData.getSql());
+        SchemaChangeClassifier.SchemaChange change = schemaChangeClassifier.classify(table, queryEventData.getSql());
+        if (change == null) {
+            return;
+        }
+        cdcEventPublisher.publishSchemaChange(toSchemaChangeEvent(change, checkpoint, eventTimestamp)).get();
+        tableMetadataByTable = tableMetadataService.refreshConfiguredTableMetadata();
+        configuredTables = Set.copyOf(tableMetadataByTable.keySet());
+        if (properties.getCheckpoint().isEnabled()) {
+            checkpointStore.save(checkpoint);
+        }
+    }
+
     private boolean shouldPersistIgnoredTransactionCheckpoint() {
         if (ignoredTablesInTransaction.isEmpty()) {
             return true;
@@ -357,6 +411,81 @@ public class BinlogCdcLifecycle implements SmartLifecycle {
                 + xid
                 + ":"
                 + checkpoint.binlogPosition();
+    }
+
+    private QualifiedTable resolveConfiguredTable(String database, String sql) {
+        if (database == null || sql == null) {
+            return null;
+        }
+        Matcher matcher = ALTER_TABLE_PATTERN.matcher(sql);
+        if (!matcher.find()) {
+            return null;
+        }
+        String tableIdentifier = matcher.group(1);
+        String resolvedDatabase = database;
+        String resolvedTable = tableIdentifier;
+        int separatorIndex = tableIdentifier.indexOf('.');
+        if (separatorIndex >= 0) {
+            resolvedDatabase = unquoteIdentifier(tableIdentifier.substring(0, separatorIndex));
+            resolvedTable = tableIdentifier.substring(separatorIndex + 1);
+        }
+        return findConfiguredTableMatch(
+                unquoteIdentifier(resolvedDatabase),
+                unquoteIdentifier(resolvedTable)
+        );
+    }
+
+    private String unquoteIdentifier(String identifier) {
+        String trimmed = identifier == null ? null : identifier.trim();
+        if (trimmed == null) {
+            return null;
+        }
+        if (trimmed.startsWith("`") && trimmed.endsWith("`") && trimmed.length() >= 2) {
+            return trimmed.substring(1, trimmed.length() - 1);
+        }
+        return trimmed;
+    }
+
+    private QualifiedTable findConfiguredTableMatch(String database, String table) {
+        if (database == null || table == null) {
+            return null;
+        }
+        String normalizedDatabase = normalizeIdentifier(database);
+        String normalizedTable = normalizeIdentifier(table);
+        Set<QualifiedTable> listenedTables = configuredTables;
+        if (listenedTables == null) {
+            return null;
+        }
+        for (QualifiedTable configuredTable : listenedTables) {
+            if (normalizeIdentifier(configuredTable.database()).equals(normalizedDatabase)
+                    && normalizeIdentifier(configuredTable.table()).equals(normalizedTable)) {
+                return configuredTable;
+            }
+        }
+        return null;
+    }
+
+    private String normalizeIdentifier(String identifier) {
+        return identifier == null ? null : identifier.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private CdcSchemaChangeEvent toSchemaChangeEvent(
+            SchemaChangeClassifier.SchemaChange change,
+            BinlogCheckpoint checkpoint,
+            long eventTimestamp
+    ) {
+        QualifiedTable table = change.table();
+        return new CdcSchemaChangeEvent(
+                "ddl:" + checkpoint.binlogFilename() + ":" + checkpoint.binlogPosition(),
+                properties.getCheckpoint().getConnectorName(),
+                table.database(),
+                table.table(),
+                change.ddlType(),
+                change.rawSql(),
+                checkpoint.binlogFilename(),
+                checkpoint.binlogPosition(),
+                eventTimestamp > 0 ? eventTimestamp : System.currentTimeMillis()
+        );
     }
 
     private BinlogCheckpoint resolveStartupCheckpoint() {

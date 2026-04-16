@@ -3,8 +3,10 @@ package com.yunye.mncdc.redis;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yunye.mncdc.config.MiniCdcProperties;
+import com.yunye.mncdc.ddl.SchemaChangeMessageHandler;
+import com.yunye.mncdc.ddl.TransactionRoutingService;
 import com.yunye.mncdc.exception.CdcMessageParseException;
-import com.yunye.mncdc.model.CdcTransactionEvent;
+import com.yunye.mncdc.model.CdcMessageEnvelope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -23,7 +25,9 @@ public class RedisSyncConsumer {
 
     private final ObjectMapper objectMapper;
 
-    private final RedisTransactionApplier redisTransactionApplier;
+    private final SchemaChangeMessageHandler schemaChangeMessageHandler;
+
+    private final TransactionRoutingService transactionRoutingService;
 
     private final MiniCdcProperties properties;
 
@@ -31,30 +35,30 @@ public class RedisSyncConsumer {
     public void consume(ConsumerRecord<String, String> record,
                         @Header(value = KafkaHeaders.DELIVERY_ATTEMPT, required = false) Integer deliveryAttempt,
                         Acknowledgment acknowledgment) {
-        CdcTransactionEvent transactionEvent = deserialize(record.value());
-
-        if (transactionEvent.events() == null || transactionEvent.events().isEmpty()) {
+        CdcMessageEnvelope envelope = deserialize(record.value());
+        if ("SCHEMA_CHANGE".equals(envelope.messageType())) {
+            schemaChangeMessageHandler.handle(envelope.schemaChange());
+            acknowledgment.acknowledge();
+            return;
+        }
+        if (envelope.transaction() == null || envelope.transaction().events() == null || envelope.transaction().events().isEmpty()) {
             acknowledgment.acknowledge();
             return;
         }
 
         try {
-            RedisTransactionApplier.ApplyResult result = redisTransactionApplier.apply(transactionEvent);
+            TransactionRoutingService.RouteResult result = transactionRoutingService.route(envelope); //判断力此次事件是否是涉及DDL事件的表，如果是就阻塞，如果不是就插入
             if (result == null) {
-                throw new IllegalStateException("Unexpected Redis apply result: null for transaction " + transactionEvent.transactionId());
+                throw new IllegalStateException("Unexpected Redis apply result: null for transaction " + envelope.transaction().transactionId());
             }
-            if (result != RedisTransactionApplier.ApplyResult.APPLIED
-                    && result != RedisTransactionApplier.ApplyResult.DUPLICATE) {
-                throw new IllegalStateException("Unexpected Redis apply result: " + result + " for transaction " + transactionEvent.transactionId());
-            }
-            log.info("Redis sync consumer {} transaction {}", result, transactionEvent.transactionId());
+            log.info("Redis sync consumer {} transaction {}", result, envelope.transaction().transactionId());
             acknowledgment.acknowledge();
         } catch (RuntimeException exception) {
             int attempt = deliveryAttempt == null ? 1 : deliveryAttempt;
             int maxAttempts = properties.getKafka().getConsumer().getMaxAttempts();
             log.error(
                     "Redis sync failed transactionId={} topic={} partition={} offset={} attempt={}/{}",
-                    transactionEvent.transactionId(),
+                    envelope.transaction() == null ? null : envelope.transaction().transactionId(),
                     record.topic(),
                     record.partition(),
                     record.offset(),
@@ -66,7 +70,7 @@ public class RedisSyncConsumer {
         }
     }
 
-    private CdcTransactionEvent deserialize(String payload) {
+    private CdcMessageEnvelope deserialize(String payload) {
         if (payload == null) {
             throw new CdcMessageParseException("Failed to parse CDC transaction message from Kafka: payload is null.", null);
         }
@@ -74,11 +78,11 @@ public class RedisSyncConsumer {
             throw new CdcMessageParseException("Failed to parse CDC transaction message from Kafka: payload is JSON null.", null);
         }
         try {
-            CdcTransactionEvent transactionEvent = objectMapper.readValue(payload, CdcTransactionEvent.class);
-            if (transactionEvent == null) {
+            CdcMessageEnvelope envelope = objectMapper.readValue(payload, CdcMessageEnvelope.class);
+            if (envelope == null) {
                 throw new CdcMessageParseException("Failed to parse CDC transaction message from Kafka: deserialized message is null.", null);
             }
-            return transactionEvent;
+            return envelope;
         } catch (JsonProcessingException exception) {
             throw new CdcMessageParseException("Failed to parse CDC transaction message from Kafka.", exception);
         }
