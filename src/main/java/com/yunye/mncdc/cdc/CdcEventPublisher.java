@@ -3,6 +3,8 @@ package com.yunye.mncdc.cdc;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yunye.mncdc.config.MiniCdcProperties;
+import com.yunye.mncdc.model.CdcMessageEnvelope;
+import com.yunye.mncdc.model.CdcSchemaChangeEvent;
 import com.yunye.mncdc.model.CdcTransactionEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,11 +26,15 @@ public class CdcEventPublisher {
     private final MiniCdcProperties properties;
 
     public CompletableFuture<SendResult<String, String>> publishTransaction(CdcTransactionEvent transactionEvent) {
-        return publishPayload(transactionEvent.transactionId(), transactionEvent);
+        return publishPayload(transactionEvent.transactionId(), CdcMessageEnvelope.transaction(transactionEvent));
     }
 
     public CompletableFuture<SendResult<String, String>> publishSnapshotPage(CdcTransactionEvent snapshotPageEvent) {
-        return publishPayload(snapshotPageEvent.transactionId(), snapshotPageEvent);
+        return publishPayload(snapshotPageEvent.transactionId(), CdcMessageEnvelope.transaction(snapshotPageEvent));
+    }
+
+    public CompletableFuture<SendResult<String, String>> publishSchemaChange(CdcSchemaChangeEvent schemaChangeEvent) {
+        return publishPayload(schemaChangeEvent.eventId(), CdcMessageEnvelope.schemaChange(schemaChangeEvent));
     }
 
     private CompletableFuture<SendResult<String, String>> publishPayload(String key, Object payloadObject) {

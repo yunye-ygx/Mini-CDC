@@ -65,6 +65,11 @@ mini-cdc:
     startup-strategy: ${CDC_STARTUP_STRATEGY:SNAPSHOT_THEN_INCREMENTAL}
   snapshot:
     page-size: ${CDC_SNAPSHOT_PAGE_SIZE:50}
+  ddl:
+    staging-key-prefix: ${CDC_DDL_STAGING_KEY_PREFIX:cdc:staging:}
+    rebuild-poll-interval: ${CDC_DDL_REBUILD_POLL_INTERVAL:5s}
+    max-retries: ${CDC_DDL_MAX_RETRIES:3}
+    running-timeout: ${CDC_DDL_RUNNING_TIMEOUT:5m}
   redis:
     key-prefix: "cdc:"
     transaction-done-prefix: "mini-cdc:txn:done:"

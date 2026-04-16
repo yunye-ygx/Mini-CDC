@@ -34,6 +34,12 @@ public class TableMetadataService {
         return cache.get();
     }
 
+    public Map<QualifiedTable, TableMetadata> refreshConfiguredTableMetadata() {
+        Map<QualifiedTable, TableMetadata> loaded = loadMetadata();
+        cache.set(loaded);
+        return loaded;
+    }
+
     private Map<QualifiedTable, TableMetadata> loadMetadata() {
         List<QualifiedTable> configuredTables = properties.getMysql().resolvedTables();
         if (configuredTables.isEmpty()) {
