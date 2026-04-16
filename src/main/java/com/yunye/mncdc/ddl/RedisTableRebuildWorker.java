@@ -35,7 +35,7 @@ public class RedisTableRebuildWorker {
                     task.schemaNextPosition()
             );
 
-            Thread.sleep(30000);
+
 
             stagingRebuildService.rebuildToStaging(task);
             SchemaState current = schemaStateStore.load(task.databaseName(), task.tableName());
