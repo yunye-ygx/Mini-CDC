@@ -4,6 +4,8 @@ import com.yunye.mncdc.entity.FullSyncTaskEntity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Result;
+import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
@@ -102,4 +104,25 @@ public interface FullSyncTaskMapper {
             @Param("tableName") String tableName,
             @Param("lastError") String lastError
     );
+
+    @Select("""
+            SELECT connector_name, database_name, table_name, status, cutover_binlog_filename, cutover_binlog_position,
+                   last_sent_pk, started_at, finished_at, last_error
+            FROM full_sync_task
+            ORDER BY updated_at DESC
+            LIMIT #{limit}
+            """)
+    @Results({
+            @Result(column = "connector_name", property = "connectorName"),
+            @Result(column = "database_name", property = "databaseName"),
+            @Result(column = "table_name", property = "tableName"),
+            @Result(column = "status", property = "status"),
+            @Result(column = "cutover_binlog_filename", property = "cutoverBinlogFilename"),
+            @Result(column = "cutover_binlog_position", property = "cutoverBinlogPosition"),
+            @Result(column = "last_sent_pk", property = "lastSentPk"),
+            @Result(column = "started_at", property = "startedAt"),
+            @Result(column = "finished_at", property = "finishedAt"),
+            @Result(column = "last_error", property = "lastError")
+    })
+    java.util.List<FullSyncTaskEntity> selectRecent(@Param("limit") int limit);
 }

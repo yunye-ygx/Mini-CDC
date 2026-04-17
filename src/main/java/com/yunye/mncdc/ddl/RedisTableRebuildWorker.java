@@ -7,6 +7,7 @@ import com.yunye.mncdc.model.CdcMessageEnvelope;
 import com.yunye.mncdc.model.PendingTransaction;
 import com.yunye.mncdc.model.RebuildTask;
 import com.yunye.mncdc.model.SchemaState;
+import com.yunye.mncdc.ops.CdcObservabilityService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,8 +26,10 @@ public class RedisTableRebuildWorker {
     private final PendingTransactionStore pendingTransactionStore;
     private final TransactionRoutingService transactionRoutingService;
     private final RedisStagingRebuildService stagingRebuildService;
+    private final CdcObservabilityService observabilityService;
 
     public void runTask(RebuildTask task) {
+        long startedAtNanos = observabilityService.recordRebuildStarted(task.databaseName(), task.tableName(), task.taskId());
         try {
             schemaStateStore.markRebuilding(
                     task.databaseName(),
@@ -52,6 +55,7 @@ public class RedisTableRebuildWorker {
                     task.schemaBinlogFile(),
                     task.schemaNextPosition()
             );
+            observabilityService.recordRebuildCompleted(task.databaseName(), task.tableName(), task.taskId(), startedAtNanos);
             rebuildTaskStore.markDone(task.taskId());
         } catch (Exception exception) {
             discardStagingQuietly(task, exception);
@@ -85,6 +89,7 @@ public class RedisTableRebuildWorker {
 
     private void handleFailure(RebuildTask task, Exception exception) {
         String errorMessage = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+        observabilityService.recordRebuildFailed(task.databaseName(), task.tableName(), task.taskId(), errorMessage);
         int currentRetryCount = task.retryCount() == null ? 0 : task.retryCount();
         int nextRetryCount = currentRetryCount + 1;
         if (nextRetryCount >= properties.getDdl().getMaxRetries()) {

@@ -3,6 +3,7 @@ package com.yunye.mncdc.ddl;
 import com.yunye.mncdc.model.CdcSchemaChangeEvent;
 import com.yunye.mncdc.model.RebuildTask;
 import com.yunye.mncdc.model.SchemaState;
+import com.yunye.mncdc.ops.CdcObservabilityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -12,6 +13,7 @@ public class SchemaChangeMessageHandler {
 
     private final SchemaStateStore schemaStateStore;
     private final RebuildTaskStore rebuildTaskStore;
+    private final CdcObservabilityService observabilityService;
 
     public HandleResult handle(CdcSchemaChangeEvent event) {
         boolean rebuildRequired = eventRequiresRebuild(event);
@@ -36,6 +38,12 @@ public class SchemaChangeMessageHandler {
                     null
             ));
         }
+        observabilityService.recordSchemaChangeAccepted(
+                event.database(),
+                event.table(),
+                event.eventId(),
+                event.ddlType()
+        );
         return HandleResult.ACCEPTED;
     }
 

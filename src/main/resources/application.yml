@@ -83,3 +83,19 @@ logging:
     org.apache.kafka: warn
     org.springframework.kafka: warn
     org.apache.kafka.clients.consumer.ConsumerConfig: warn
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true

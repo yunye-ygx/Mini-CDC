@@ -61,6 +61,17 @@ public class SchemaStateStore {
         upsert(withStatus(databaseName, tableName, "ACTIVE", schemaBinlogFile, schemaNextPosition));
     }
 
+    public List<SchemaState> loadAll() {
+        try {
+            return schemaStateMapper.selectAll().stream()
+                    .filter(Objects::nonNull)
+                    .map(this::toModel)
+                    .toList();
+        } catch (PersistenceException | DataAccessException exception) {
+            throw new IllegalStateException("Failed to load schema state.", exception);
+        }
+    }
+
     public record SchemaVersion(String binlogFilename, Long nextPosition) {
     }
 

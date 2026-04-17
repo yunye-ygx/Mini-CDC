@@ -7,6 +7,8 @@ import com.yunye.mncdc.ddl.SchemaChangeMessageHandler;
 import com.yunye.mncdc.ddl.TransactionRoutingService;
 import com.yunye.mncdc.exception.CdcMessageParseException;
 import com.yunye.mncdc.model.CdcMessageEnvelope;
+import com.yunye.mncdc.model.CdcTransactionRow;
+import com.yunye.mncdc.ops.CdcObservabilityService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -31,6 +33,8 @@ public class RedisSyncConsumer {
 
     private final MiniCdcProperties properties;
 
+    private final CdcObservabilityService observabilityService;
+
     @KafkaListener(topics = "${mini-cdc.kafka.topic}")
     public void consume(ConsumerRecord<String, String> record,
                         @Header(value = KafkaHeaders.DELIVERY_ATTEMPT, required = false) Integer deliveryAttempt,
@@ -51,9 +55,33 @@ public class RedisSyncConsumer {
             if (result == null) {
                 throw new IllegalStateException("Unexpected Redis apply result: null for transaction " + envelope.transaction().transactionId());
             }
+            CdcTransactionRow first = envelope.transaction().events().get(0);
+            if (result == TransactionRoutingService.RouteResult.APPLIED) {
+                observabilityService.recordTransactionApplied(
+                        first.database(),
+                        first.table(),
+                        envelope.transaction().transactionId()
+                );
+            }
+            if (result == TransactionRoutingService.RouteResult.BUFFERED) {
+                observabilityService.recordTransactionBuffered(
+                        first.database(),
+                        first.table(),
+                        envelope.transaction().transactionId()
+                );
+            }
             log.info("Redis sync consumer {} transaction {}", result, envelope.transaction().transactionId());
             acknowledgment.acknowledge();
         } catch (RuntimeException exception) {
+            if (envelope.transaction() != null && envelope.transaction().events() != null && !envelope.transaction().events().isEmpty()) {
+                CdcTransactionRow first = envelope.transaction().events().get(0);
+                observabilityService.recordTransactionFailed(
+                        first.database(),
+                        first.table(),
+                        envelope.transaction().transactionId(),
+                        exception.getMessage()
+                );
+            }
             int attempt = deliveryAttempt == null ? 1 : deliveryAttempt;
             int maxAttempts = properties.getKafka().getConsumer().getMaxAttempts();
             log.error(

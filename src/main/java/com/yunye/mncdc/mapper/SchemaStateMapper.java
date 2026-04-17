@@ -63,4 +63,21 @@ public interface SchemaStateMapper {
             @Result(column = "ddl_sql", property = "ddlSql")
     })
     List<SchemaStateEntity> selectByTableKeys(@Param("tableKeys") List<String> tableKeys);
+
+    @Select("""
+            SELECT table_key, database_name, table_name, status, schema_binlog_file, schema_next_position, ddl_type, ddl_sql
+            FROM schema_state
+            ORDER BY database_name ASC, table_name ASC
+            """)
+    @Results({
+            @Result(column = "table_key", property = "tableKey"),
+            @Result(column = "database_name", property = "databaseName"),
+            @Result(column = "table_name", property = "tableName"),
+            @Result(column = "status", property = "status"),
+            @Result(column = "schema_binlog_file", property = "schemaBinlogFile"),
+            @Result(column = "schema_next_position", property = "schemaNextPosition"),
+            @Result(column = "ddl_type", property = "ddlType"),
+            @Result(column = "ddl_sql", property = "ddlSql")
+    })
+    List<SchemaStateEntity> selectAll();
 }
