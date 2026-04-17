@@ -5,6 +5,7 @@ import com.yunye.mncdc.entity.CheckpointOffsetEntity;
 import com.yunye.mncdc.mapper.CheckpointMapper;
 import com.yunye.mncdc.model.BinlogCheckpoint;
 import com.yunye.mncdc.model.MasterStatusRecord;
+import com.yunye.mncdc.ops.CdcObservabilityService;
 import lombok.RequiredArgsConstructor;
 import org.apache.ibatis.exceptions.PersistenceException;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ public class CheckpointStore {
 
     private final MiniCdcProperties properties;
     private final CheckpointMapper checkpointMapper;
+    private final CdcObservabilityService observabilityService;
 
     public Optional<BinlogCheckpoint> load() {
         String connectorName = getConnectorName();
@@ -42,6 +44,11 @@ public class CheckpointStore {
     public void save(BinlogCheckpoint checkpoint) {
         try {
             checkpointMapper.insertOrUpdate(toEntity(checkpoint));
+            observabilityService.recordCheckpointSaved(
+                    checkpoint.connectorName(),
+                    checkpoint.binlogFilename(),
+                    checkpoint.binlogPosition()
+            );
         } catch (PersistenceException | DataAccessException exception) {
             throw new IllegalStateException("Failed to persist CDC checkpoint.", exception);
         }

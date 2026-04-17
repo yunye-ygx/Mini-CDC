@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CDC Ops Dashboard</title>
+    <link rel="stylesheet" href="/ops-dashboard/ops-dashboard.css">
+</head>
+<body>
+<main class="dashboard-shell">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">Observability Surface</p>
+            <h1>CDC Ops Dashboard</h1>
+            <p class="subtitle">Read-only runtime view for checkpoint, rebuild pressure, schema state, and recent CDC activity.</p>
+        </div>
+        <div class="hero-meta">
+            <p id="last-refresh">Waiting for first refresh</p>
+            <button id="refresh-button" type="button">Refresh now</button>
+        </div>
+    </header>
+
+    <div id="error-banner" class="error-banner hidden" role="alert"></div>
+
+    <section class="grid two-up">
+        <article class="card" id="health-card">
+            <h2>Health</h2>
+            <div class="card-body"></div>
+        </article>
+        <article class="card" id="checkpoint-card">
+            <h2>Checkpoint</h2>
+            <div class="card-body"></div>
+        </article>
+    </section>
+
+    <section class="grid three-up">
+        <article class="card" id="task-card">
+            <h2>Rebuild Summary</h2>
+            <div class="card-body"></div>
+        </article>
+        <article class="card" id="full-sync-card">
+            <h2>Full Sync Tasks</h2>
+            <div class="card-body"></div>
+        </article>
+        <article class="card" id="schema-card">
+            <h2>Schema State</h2>
+            <div class="card-body"></div>
+        </article>
+    </section>
+
+    <section class="grid one-up">
+        <article class="card" id="events-card">
+            <h2>Recent Events</h2>
+            <div class="card-body"></div>
+        </article>
+    </section>
+</main>
+<script src="/ops-dashboard/ops-dashboard.js"></script>
+</body>
+</html>

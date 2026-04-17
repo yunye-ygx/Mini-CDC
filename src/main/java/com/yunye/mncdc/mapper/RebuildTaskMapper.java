@@ -104,4 +104,34 @@ public interface RebuildTaskMapper {
             WHERE task_id = #{taskId}
             """)
     int updateStatus(@Param("taskId") String taskId, @Param("status") String status);
+
+    @Select("""
+            <script>
+            SELECT task_id, database_name, table_name, schema_binlog_file, schema_next_position, status, retry_count, last_error
+            FROM rebuild_task
+            <if test="status != null and status != ''">
+              WHERE status = #{status}
+            </if>
+            ORDER BY updated_at DESC
+            LIMIT #{limit}
+            </script>
+            """)
+    @Results({
+            @Result(column = "task_id", property = "taskId"),
+            @Result(column = "database_name", property = "databaseName"),
+            @Result(column = "table_name", property = "tableName"),
+            @Result(column = "schema_binlog_file", property = "schemaBinlogFile"),
+            @Result(column = "schema_next_position", property = "schemaNextPosition"),
+            @Result(column = "status", property = "status"),
+            @Result(column = "retry_count", property = "retryCount"),
+            @Result(column = "last_error", property = "lastError")
+    })
+    java.util.List<RebuildTaskEntity> selectRecent(@Param("status") String status, @Param("limit") int limit);
+
+    @Select("""
+            SELECT COUNT(1)
+            FROM rebuild_task
+            WHERE status = #{status}
+            """)
+    long countByStatus(@Param("status") String status);
 }

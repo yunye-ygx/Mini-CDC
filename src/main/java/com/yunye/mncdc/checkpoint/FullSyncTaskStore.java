@@ -9,6 +9,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -64,6 +65,16 @@ public class FullSyncTaskStore {
         }
     }
 
+    public List<FullSyncTask> loadRecent(int limit) {
+        try {
+            return fullSyncTaskMapper.selectRecent(limit).stream()
+                    .map(this::toModel)
+                    .toList();
+        } catch (PersistenceException | DataAccessException exception) {
+            throw new IllegalStateException("Failed to load full sync tasks.", exception);
+        }
+    }
+
     private FullSyncTaskEntity toEntity(FullSyncTask task) {
         FullSyncTaskEntity entity = new FullSyncTaskEntity();
         entity.setConnectorName(task.connectorName());
@@ -77,6 +88,20 @@ public class FullSyncTaskStore {
         entity.setFinishedAt(task.finishedAt());
         entity.setLastError(task.lastError());
         return entity;
+    }
+
+    private FullSyncTask toModel(FullSyncTaskEntity entity) {
+        return new FullSyncTask(
+                entity.getConnectorName(),
+                entity.getDatabaseName(),
+                entity.getTableName(),
+                entity.getStatus() == null ? null : com.yunye.mncdc.model.FullSyncTaskStatus.valueOf(entity.getStatus()),
+                entity.getCutoverBinlogFilename(),
+                entity.getCutoverBinlogPosition(),
+                entity.getLastSentPk(),
+                entity.getFinishedAt(),
+                entity.getLastError()
+        );
     }
 
     private void assertTaskUpdated(String connectorName, String databaseName, String tableName, int updatedRows) {

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -72,6 +73,24 @@ public class RebuildTaskStore {
             rebuildTaskMapper.resetExpiredRunningTasks(Timestamp.from(cutoff));
         } catch (PersistenceException | DataAccessException exception) {
             throw new IllegalStateException("Failed to persist rebuild task.", exception);
+        }
+    }
+
+    public List<RebuildTask> loadRecent(String status, int limit) {
+        try {
+            return rebuildTaskMapper.selectRecent(status, limit).stream()
+                    .map(this::toModel)
+                    .toList();
+        } catch (PersistenceException | DataAccessException exception) {
+            throw new IllegalStateException("Failed to load rebuild task.", exception);
+        }
+    }
+
+    public long countByStatus(String status) {
+        try {
+            return rebuildTaskMapper.countByStatus(status);
+        } catch (PersistenceException | DataAccessException exception) {
+            throw new IllegalStateException("Failed to count rebuild tasks.", exception);
         }
     }
 

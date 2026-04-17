@@ -55,7 +55,13 @@ import java.util.regex.Pattern;
 @ConditionalOnProperty(prefix = "mini-cdc", name = "enabled", havingValue = "true")
 public class BinlogCdcLifecycle implements SmartLifecycle {
 
-    private static final Set<String> INTERNAL_PROGRESS_TABLES = Set.of("cdc_offset", "full_sync_task");
+    private static final Set<String> INTERNAL_PROGRESS_TABLES = Set.of(
+            "cdc_offset",
+            "full_sync_task",
+            "schema_state",
+            "rebuild_task",
+            "pending_tx"
+    );
     private static final Pattern ALTER_TABLE_PATTERN = Pattern.compile(
             "(?i)^\\s*ALTER\\s+TABLE\\s+((?:`[^`]+`|[\\w]+)(?:\\.(?:`[^`]+`|[\\w]+))?)"
     );
